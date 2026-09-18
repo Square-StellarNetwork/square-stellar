@@ -1,0 +1,251 @@
+name: contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "packages/core/**"
+      - ".github/workflows/contracts.yml"
+  # No path filter on pull_request, deliberately. A required status check that a
+  # filter skips never reports, and GitHub blocks the merge waiting for a run
+  # that will not happen. The push filter above still keeps main's runs narrow.
+  pull_request:
+  workflow_dispatch:
+
+# Read-only at the workflow level, the rule did-aip-driver.yml states.
+# `pull-requests: write` exists for one step, the gas-report comment in the
+# `forge` job, and is granted there; the `sdk` job runs two `npm install`s,
+# which execute package lifecycle scripts, and had been inheriting it.
+permissions:
+  contents: read
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  forge:
+    name: build, test, gas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09  # v1.9.1
+        with:
+          version: stable
+
+      - name: Build
+        working-directory: contracts
+        run: forge build --sizes
+
+      - name: Test
+        working-directory: contracts
+        run: forge test -vvv
+
+      - name: Gas report
+        working-directory: contracts
+        run: forge test --gas-report > ../gas-report.txt
+
+      # --ir-minimum because coverage disables the optimizer to keep the source
+      # mapping honest, and SquareJob then fails to compile with "stack too
+      # deep". Deployment scripts and mocks are excluded: neither has assertions
+      # to cover, and counting them reports the contracts that ship as lower
+      # than they are.
+      - name: Coverage
+        working-directory: contracts
+        env:
+          UNOPTIMIZED_BUILD: "true"
+        run: |
+          set -o pipefail
+          forge coverage --ir-minimum --no-match-coverage "(script|test)/" | tee ../coverage.txt
+          {
+            echo '### Contract coverage'
+            echo
+            echo '```'
+            sed -n '/^╭/,/^╰/p' ../coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The report goes to the run summary unconditionally, so it exists for
+      # fork pull requests, for pushes to main, and for any run where the
+      # comment below is skipped or fails.
+      - name: Gas report on the run summary
+        run: |
+          {
+            echo '### Contract gas'
+            echo
+            echo '```'
+            sed -n '/^╭/,/^╰/p' gas-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Same-repository pull requests only. A `pull_request` run from a fork
+      # gets a read-only GITHUB_TOKEN whatever the `permissions:` block above
+      # says, so createComment returns 403 and the step — and with it a
+      # required check — fails for an outside contributor who has no way to fix
+      # it. Since square#43 removed the path filter this ran on every pull
+      # request, including ones that touch no contract at all. The report is on
+      # the run summary either way.
+      - name: Gas report on the pull request
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('gas-report.txt', 'utf8');
+            const rows = report.split('\n').filter(l => /^\| (createJob|fund|submit|complete|reject|claimRefund|withdraw|finalize|finalizeDecided|dispute|vote|lapse|list|buy|cancel|recordExpiry)\b/.test(l));
+            const body = ['## Gas report', '', '| function | min | avg | median | max | calls |', '|---|---|---|---|---|---|', ...rows.map(r => r.replace(/\s+\|\s+/g, ' | '))].join('\n');
+            const marker = '<!-- square-gas-report -->';
+            const {owner, repo} = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({owner, repo, issue_number});
+            const existing = comments.data.find(c => c.body && c.body.includes(marker));
+            const payload = `${marker}\n${body}`;
+            if (existing) await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body: payload});
+            else await github.rest.issues.createComment({owner, repo, issue_number, body: payload});
+
+  sdk:
+    name: "@squaresdk/core against anvil"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09  # v1.9.1
+        with:
+          version: stable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Build contracts
+        working-directory: contracts
+        run: forge build
+
+      - name: Start anvil and deploy the local stack
+        working-directory: contracts
+        run: |
+          anvil --port 8545 --chain-id 31337 --silent &
+          for _ in $(seq 1 30); do cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break; sleep 1; done
+          forge script script/DeployLocal.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+
+      - name: Build @squaresdk/did-resolver
+        working-directory: packages/did-resolver
+        run: |
+          npm install
+          npm run build
+
+      - name: Install, typecheck, test @squaresdk/core
+        working-directory: packages/core
+        run: |
+          npm install --install-links
+          npm run generate:abi
+          git diff --exit-code -- src/abi
+          npm run check:events
+          npm run typecheck
+          npm test -- --reporter=default --reporter=json --outputFile.json=/tmp/core.json
+          npm run build
+
+      # test/fork.test.ts is skipIf(!ARC_FORK_RPC_URL), no workflow sets it, and
+      # this job is a required check — so the suite that claims the lifecycle
+      # works against the real ERC-8004 registries has never run here, and until
+      # now the skip was not visible anywhere. Naming it does not make it run;
+      # it stops the absence being silent.
+      - name: How many tests ran
+        if: always()
+        run: node .github/scripts/vitest-summary.mjs /tmp/core.json "@squaresdk/core"
+
+      - name: Five settlement paths end to end (anvil)
+        working-directory: packages/core
+        env:
+          ANVIL: "1"
+          CHAIN_ID: "31337"
+          RPC_URL: http://127.0.0.1:8545
+          LIFECYCLE_REPORT: ${{ runner.temp }}/lifecycle-31337.md
+        run: |
+          npm run lifecycle
+          cat "$LIFECYCLE_REPORT"
+
+  selectors:
+    name: deployed selectors (Arc Testnet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install
+        working-directory: packages/core
+        run: npm install --install-links --no-audit --no-fund
+
+      - name: Every selector the SDK calls is in the deployed bytecode
+        id: selectors
+        working-directory: packages/core
+        run: npm run check:selectors
+
+      - name: Say what a red run here means
+        if: failure() && steps.selectors.outcome == 'failure'
+        run: |
+          {
+            echo "### This is the known gap, not a regression in this branch"
+            echo
+            echo "The Arc Testnet stack was deployed on 2026-09-09 and \`main\` has moved"
+            echo "since. Until the redeploy in \`docs/deploy/README.md\` happens, this job is"
+            echo "red for every pull request and the gap grows with every contract change."
+            echo "That is the state square#324 tracks, and it is why this job is not in the"
+            echo "required contexts."
+            echo
+            echo "Read it as a regression only if the selectors listed above belong to a"
+            echo "contract your branch did not touch, or if the count shrinks when you revert"
+            echo "your change. After the redeploy this job goes green and joins the required"
+            echo "list."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Arc's precompiles, not revm's. "It verifies in Foundry" and "it verifies on
+  # Arc" are different claims; this job is the second one. An eth_call with a
+  # state override runs the real bytecode against the real 0x06/0x07/0x08 for
+  # one call, so it needs no deployment, no key and no gas — which is why it can
+  # run on fork pull requests too.
+  arc:
+    name: verifies on Arc Testnet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09  # v1.9.1
+        with:
+          version: stable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: A proof the prover produced, against Arc's precompiles
+        run: node script/verify-on-arc.mjs
+
+      # The deployed verifier, when the repository says where one is. The
+      # address lives in a repository variable rather than in this file because
+      # it is temporary — square#16 produces a new proving key and therefore a
+      # new verifier at a new address — so an unset variable makes the step
+      # disappear instead of failing against a stale address.
+      - name: The deployed verifier, if one is configured
+        if: vars.ARC_VERIFIER_ADDRESS != ''
+        env:
+          ADDRESS: ${{ vars.ARC_VERIFIER_ADDRESS }}
+        run: node script/verify-on-arc.mjs --address "$ADDRESS"

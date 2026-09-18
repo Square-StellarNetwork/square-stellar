@@ -1,0 +1,198 @@
+name: services
+
+# Builds the images the long-running services ship as and publishes them to
+# GHCR, which is where the hosted stack takes them from (square#336,
+# docs/deploy/railway.md). stack.yml already builds the services' Dockerfiles
+# through compose on every pull request and asks the containers whether they
+# are healthy; this workflow is the other half: the image a push to main
+# produced is the image that runs against Arc, under a tag that names the
+# commit, and the hosted services are told to pull it. The hosted agent
+# (packages/hosted/Dockerfile) is built here too; compose does not run it,
+# since it needs a model key.
+#
+#   ghcr.io/square-stellarnetwork/square-<service>:sha-<12 hex>   the record, written once
+#   ghcr.io/square-stellarnetwork/square-<service>:main           what main built last; the hosted services point here
+#
+# No :latest, for the reason did-aip-driver.yml gives. The packages the first
+# run created came out public, which is what the host's anonymous pull needs;
+# a new one that does not is made public once, by hand (Packages ->
+# square-<service> -> Package settings -> Change visibility).
+#
+# The smoke test is hermetic: every service starts with a dead RPC endpoint and
+# no database, and answers /health with 503, which is the check the container
+# runs at all; what a healthy answer needs is what stack.yml brings up. The
+# hosted agent, which refuses to start without a chain, is run up to its usage
+# line and through `seal`, which loads every module and needs no chain.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/indexer/**"
+      - "services/keeper/**"
+      - "services/prover/**"
+      - "services/screener/**"
+      - "packages/a2a/**"
+      - "packages/agent/**"
+      - "packages/core/**"
+      - "packages/data/**"
+      - "packages/did-resolver/**"
+      - "packages/hardening/**"
+      - "packages/hosted/**"
+      - "packages/mcp/**"
+      - "packages/observability/**"
+      - "packages/policy/**"
+      - "packages/x402/**"
+      - ".dockerignore"
+      - ".github/workflows/services.yml"
+  # Only the workflow itself on pull requests: the Dockerfiles are built and run
+  # by stack.yml on every one, so a second build would prove nothing new, and
+  # this workflow is not a required check.
+  pull_request:
+    paths:
+      - ".github/workflows/services.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: services-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: ${{ matrix.service }} image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: indexer
+            dockerfile: services/indexer/Dockerfile
+          - service: keeper
+            dockerfile: services/keeper/Dockerfile
+          - service: prover
+            dockerfile: services/prover/Dockerfile
+          - service: screener
+            dockerfile: services/screener/Dockerfile
+          - service: hosted
+            dockerfile: packages/hosted/Dockerfile
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/square-${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+
+      # The context is the repository root: each Dockerfile copies the packages
+      # the service depends on by path, which is why compose.yaml builds them
+      # from the root too.
+      - name: Build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE }}:candidate
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=services-${{ matrix.service }}
+          cache-to: type=gha,scope=services-${{ matrix.service }},mode=max
+
+      - name: Smoke test (hermetic; the container starts and answers)
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          if [ "$SERVICE" = "hosted" ]; then
+            # No chain and no key: the binary loads every module it has and
+            # says what it needs, which is the check that the image's
+            # node_modules resolve at all.
+            set +e; out=$(docker run --rm "${IMAGE}:candidate" 2>&1); code=$?; set -e
+            echo "$out"
+            [ "$code" = "1" ] && echo "$out" | grep -q "usage: square-hosted"
+            # seal needs no chain either, and runs the configuration code path.
+            sealed=$(echo "not-a-real-key" | docker run --rm -i -e SQUARE_SEAL_SECRET=smoke-secret-sixteen-chars "${IMAGE}:candidate" node /app/dist/bin.js seal 7)
+            echo "$sealed" | grep -q "^sealed:v1:"
+            echo "square-hosted answers its usage and seals a key"
+            exit 0
+          fi
+          case "$SERVICE" in
+            indexer) port=3010; args=(-e CHAIN_ID=31337 -e RPC_URL=http://127.0.0.1:9 -e START_BLOCK=0) ;;
+            keeper)  port=3011; args=(-e CHAIN_ID=31337 -e RPC_URL=http://127.0.0.1:9 -e KEEPER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80) ;;
+            prover)  port=3003; args=() ;;
+            screener) port=3012; args=(-e CHAIN_ID=31337 -e RPC_URL=http://127.0.0.1:9 -e SCREENING_REGISTRY=0x9A676e781A523b5d0C0e43731313A708CB607508 -e SCREENING_CANARY=0x098B716B8Aaf21512996dC57EB0615e2383E2f96 -e SCREENER_PRIVATE_KEY=0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356) ;;
+          esac
+          docker run -d --name "$SERVICE" -p "$port:$port" "${args[@]}" "${IMAGE}:candidate"
+          code=000
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /tmp/health.json -w "%{http_code}" "http://localhost:$port/health" || true)
+            [ "$code" != "000" ] && break
+            sleep 1
+          done
+          echo "/health answered $code"
+          cat /tmp/health.json 2>/dev/null; echo
+          docker logs "$SERVICE" | tail -20
+          docker rm -f "$SERVICE" >/dev/null
+          # 503 is the honest answer with no chain and no database behind it; a
+          # connection refused or a crash is the failure this step exists for.
+          [ "$code" = "503" ] || [ "$code" = "200" ]
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push sha-<commit> and main
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          short=$(echo "${GITHUB_SHA}" | cut -c1-12)
+          docker tag "${IMAGE}:candidate" "${IMAGE}:sha-${short}"
+          docker tag "${IMAGE}:candidate" "${IMAGE}:main"
+          docker push "${IMAGE}:sha-${short}"
+          docker push "${IMAGE}:main"
+          echo "published ${IMAGE}:sha-${short} and moved ${IMAGE}:main to it" >> "$GITHUB_STEP_SUMMARY"
+
+      # The hosted service points at :main and is asked to pull it. Skipped,
+      # and said so, until the project token is in the repository's secrets
+      # (docs/deploy/railway.md); a build that is not redeployed is still
+      # published above, so the operator can pull it by hand.
+      #
+      # The matrix builds every image, and the project holds only the services
+      # that have been created so far (docs/deploy/railway.md brings them up one
+      # at a time, and some of them wait on the Arc redeploy). So the step first
+      # lists the project's services and redeploys only a service that exists;
+      # asking Railway to redeploy a service it does not have fails the job of an
+      # image that was built and published correctly. A token that cannot list
+      # the project still fails the step, which is the right answer for a token
+      # that has expired or was scoped to the wrong environment.
+      - name: Redeploy on Railway
+        if: github.event_name != 'pull_request'
+        env:
+          HAS_TOKEN: ${{ secrets.RAILWAY_TOKEN != '' }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "RAILWAY_TOKEN is not set; ${IMAGE}:main was published but no hosted service was told to pull it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          services=$(npx -y @railway/cli@5 status --json | jq -r '.services.edges[].node.name')
+          if ! grep -qx "square-$SERVICE" <<< "$services"; then
+            echo "square-$SERVICE is not a service of the Railway project yet; ${IMAGE}:main was published but nothing was told to pull it (docs/deploy/railway.md, Setting a service up)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npx -y @railway/cli@5 redeploy --service "square-$SERVICE" --from-source --yes
+          echo "square-$SERVICE on Railway is pulling ${IMAGE}:main" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,163 @@
+import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
+import type { FacilitatorClient, RouteConfig } from "@x402/core/server";
+import type { Network } from "@x402/core/types";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { getAddress, type Address } from "viem";
+import { ARC_TESTNET_USDC, usdcAsset } from "./network.js";
+
+export type SettlementMode = "after-handler" | "before-handler";
+
+export interface PaidRouteConfig {
+  price: string;
+  description?: string;
+  mimeType?: string;
+  maxTimeoutSeconds?: number;
+}
+
+export interface PaidRoutesOptions {
+  payTo: Address;
+  network: Network;
+  facilitator: FacilitatorClient;
+  routes: Record<string, PaidRouteConfig>;
+  asset?: Address;
+  settlement?: SettlementMode;
+}
+
+export type GatewayHandler = (c: Context) => Response | Promise<Response>;
+
+export interface GatewayRoute extends PaidRouteConfig {
+  handler: GatewayHandler;
+}
+
+export interface GatewayAppOptions {
+  payTo: Address;
+  network: Network;
+  facilitator: FacilitatorClient;
+  routes: Record<string, GatewayRoute>;
+  asset?: Address;
+  settlement?: SettlementMode;
+}
+
+const HEAD_METHOD = "HEAD";
+
+export const BEFORE_HANDLER_UNSUPPORTED =
+  'settlement: "before-handler" is not supported. The upfront payment flow makes the resource server accept the payload ' +
+  "without calling the facilitator's verify, and every replay-ledger operation this package owns lives in the verify hooks: " +
+  "the authorization would be neither checked against the ledger nor written to it, and a successful payment would leave no row. " +
+  'Use the default settlement: "after-handler".';
+
+export function createPaidRoutes(options: PaidRoutesOptions): MiddlewareHandler {
+  const asset = options.asset ?? ARC_TESTNET_USDC;
+  const settlement = options.settlement ?? "after-handler";
+  if (settlement === "before-handler") {
+    throw new Error(`createPaidRoutes: ${BEFORE_HANDLER_UNSUPPORTED}`);
+  }
+  const payTo = getAddress(options.payTo);
+  const server = new x402ResourceServer(options.facilitator).register(
+    options.network,
+    new ExactEvmScheme()
+  );
+  const routes: Record<string, RouteConfig> = {};
+  const declared = new Set(Object.keys(options.routes).map((pattern) => routePatternKey(parseRoutePattern(pattern))));
+  for (const [pattern, route] of Object.entries(options.routes)) {
+    const config: RouteConfig = {
+      accepts: {
+        scheme: "exact",
+        payTo,
+        network: options.network,
+        price: usdcAsset(route.price, asset),
+        ...(route.maxTimeoutSeconds !== undefined ? { maxTimeoutSeconds: route.maxTimeoutSeconds } : {}),
+      },
+      mimeType: route.mimeType ?? "application/json",
+      ...(route.description !== undefined ? { description: route.description } : {}),
+    };
+    routes[pattern] = config;
+    const parsed = parseRoutePattern(pattern);
+    if (parsed.method === "GET") {
+      const headKey = routePatternKey({ method: HEAD_METHOD, path: parsed.path });
+      if (!declared.has(headKey)) {
+        routes[headKey] = config;
+      }
+    }
+  }
+  return paymentMiddleware(routes, server);
+}
+
+export interface ParsedRoutePattern {
+  method: string;
+  path: string;
+}
+
+export function parseRoutePattern(pattern: string): ParsedRoutePattern {
+  const trimmed = pattern.trim();
+  const parts = trimmed.split(/\s+/);
+  const method = parts.length > 1 ? (parts[0] ?? "*").toUpperCase() : "*";
+  const rawPath = parts.length > 1 ? (parts[1] ?? "/") : trimmed;
+  const path = rawPath.replace(/\[([^\]]+)\]/g, ":$1");
+  return { method, path };
+}
+
+export function routePatternKey(parsed: ParsedRoutePattern): string {
+  return parsed.method === "*" ? parsed.path : `${parsed.method} ${parsed.path}`;
+}
+
+export function routeCollisionMessage(first: string, second: string, key: string): string {
+  return (
+    `createGatewayApp: two route keys collapse to the same route: ${JSON.stringify(first)} and ` +
+    `${JSON.stringify(second)} both mean ${JSON.stringify(key)}. Keep one.`
+  );
+}
+
+interface CanonicalGatewayRoute extends ParsedRoutePattern {
+  key: string;
+  config: PaidRouteConfig;
+  handler: GatewayHandler;
+}
+
+function canonicalGatewayRoutes(routes: Record<string, GatewayRoute>): CanonicalGatewayRoute[] {
+  const spellingByKey = new Map<string, string>();
+  const canonical: CanonicalGatewayRoute[] = [];
+  for (const [pattern, route] of Object.entries(routes)) {
+    const { method, path } = parseRoutePattern(pattern);
+    const key = routePatternKey({ method, path });
+    const previous = spellingByKey.get(key);
+    if (previous !== undefined) throw new Error(routeCollisionMessage(previous, pattern, key));
+    spellingByKey.set(key, pattern);
+    const { handler, ...config } = route;
+    canonical.push({ method, path, key, config, handler });
+  }
+  return canonical;
+}
+
+export function createGatewayApp(options: GatewayAppOptions): Hono {
+  const asset = options.asset ?? ARC_TESTNET_USDC;
+  const app = new Hono();
+  app.get("/health", (c) =>
+    c.json({ ok: true, network: options.network, payTo: getAddress(options.payTo), asset })
+  );
+  const canonical = canonicalGatewayRoutes(options.routes);
+  const paidRoutes: Record<string, PaidRouteConfig> = {};
+  for (const { key, config } of canonical) {
+    paidRoutes[key] = config;
+  }
+  app.use(
+    "*",
+    createPaidRoutes({
+      payTo: options.payTo,
+      network: options.network,
+      facilitator: options.facilitator,
+      routes: paidRoutes,
+      asset,
+      ...(options.settlement !== undefined ? { settlement: options.settlement } : {}),
+    })
+  );
+  for (const { method, path, handler } of canonical) {
+    if (method === "*") {
+      app.all(path, handler);
+    } else {
+      app.on(method, path, handler);
+    }
+  }
+  return app;
+}

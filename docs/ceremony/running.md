@@ -1,0 +1,264 @@
+# Running the ceremony
+
+The operational half of [#16][i16]. [README.md](./README.md) is the plan and the
+open decisions; this is what the coordinator actually types.
+
+Every step goes through `circuits/scripts/ceremony.mjs`, which keeps a
+transcript as it goes rather than reconstructing one afterwards. The transcript
+is the published record, so it has to be written by the thing doing the work.
+
+[i16]: https://github.com/Square-StellarNetwork/square/issues/16
+
+## Before anything
+
+The announcement must already be out, with the beacon round in it. A beacon
+chosen after contributions have been collected proves nothing — see
+[beacon.md](./beacon.md). The round number is what makes "we could not have
+known this in advance" checkable, and it is only checkable if it was public
+before the first contribution.
+
+```bash
+cd circuits
+npm install
+npm run build -- --no-zkey     # compiles the circuit; the ceremony makes the key
+```
+
+## Opening
+
+```bash
+node scripts/ceremony.mjs init
+```
+
+Creates `build/ceremony/payment_0000.zkey` from the compiled circuit and the
+adopted phase-1 powers of tau, and starts the transcript with the circuit hash
+and the phase-1 provenance. It refuses to run if a transcript already exists:
+restarting a ceremony silently would destroy the only record of the first one.
+
+Nothing in this file is secret. Publish it.
+
+## Each contribution
+
+The contributor runs this on a machine they trust, against the key they
+received:
+
+```bash
+node scripts/ceremony.mjs contribute "Their Name or Organisation"
+node scripts/ceremony.mjs verify
+```
+
+`contribute` hands over to snarkjs, which prompts for a random text. Type
+something only you can see. It is mixed with 64 bytes snarkjs draws from the
+operating system, so it does not need to be long — and it must not be written
+down, pasted, or shared.
+
+The script does not generate that value or pass it as an argument, and this is
+deliberate. An earlier version did both: it echoed the command it ran, so the
+entropy landed in the contributor's terminal, and it sat in `argv` where `ps`
+exposes it to every other process on the machine. Since these same instructions
+ask contributors to publish the hashes their terminal printed, that was a route
+from "destroy this value" to "publish it" in one copy-paste. The strongest shape
+is the one where the script never holds the secret at all.
+
+`contribute` then records the contribution's transcript hash and the new key's
+SHA-256, and prints both — those are public. `verify` re-derives the chain so
+far against the circuit and the phase-1 file, so a broken link is caught at the
+step that broke it rather than at the end.
+
+Publish the printed hashes as each contribution lands. The next contributor
+checks the key they received against the previously published hash — that is
+what stops a key being swapped between links, and it only works if the hashes
+are public while the ceremony is still running.
+
+Then the contributor destroys their entropy. If they typed it and never wrote
+it down, that is already done; closing the shell finishes it. The soundness of
+the whole chain is one contributor doing exactly that, so it is worth saying out
+loud rather than assuming it is obvious.
+
+## Closing
+
+When the window shuts, apply the announced round:
+
+```bash
+node scripts/ceremony.mjs beacon <announced round>
+node scripts/ceremony.mjs finalize
+```
+
+`beacon` fetches the round from drand, checks the chain hash, genesis and period
+against what [beacon.md](./beacon.md) announced — a round number means nothing
+without the chain it counts on — and uses the round's BLS signature as the
+randomness. It refuses to run on a chain with no contributions: a beacon applied
+to a key this project generated alone is not a ceremony, and the transcript
+would be claiming otherwise.
+
+`finalize` exports the verifying key and completes the transcript.
+
+## Checking it
+
+One command, and it is the same one a third party runs:
+
+```bash
+node scripts/ceremony.mjs verify-chain
+```
+
+It checks the phase-1 file by hash, the compiled circuit against the hash the
+ceremony started from, the final key against circuit and ptau, the keys on disk
+against the transcript — none missing from the chain and none the transcript
+does not record, checked before there is a final key as well as after
+(square#234) — every contribution's hash and recorded name against the
+transcript in order — the values each contributor published, so a chain re-run
+with different contributors fails here (square#229) — and the transcript's
+readable name against the one it recorded, any contribution recorded without
+the hash and name read back from its key, and the beacon three ways: the value drand
+publishes for that round, fetched live rather than read from the transcript; the
+round's BLS signature against **the group public key pinned in `ceremony.mjs`**;
+and that the round lands after the last contribution. Then the verifying key: it
+exports one from the final key and compares it with the `payment_vk.json`
+`finalize` wrote and with the repository's `build/payment_vk.json`, and checks
+the ceremony's file against the digest in the transcript. It exits non-zero if
+anything fails, and it reports every failure rather than stopping at the first.
+A check that cannot run at all is one of those failures, and the sections after
+it still run: circom missing from the machine doing the checking, a final key the
+inspector cannot read, a transcript that is not there. The count at the end is
+printed on every run (square#255).
+
+The pinned key is what separates "matches what drand told me" from "is what
+drand produced", so an auditor whose DNS or TLS path to `api.drand.sh` is
+compromised still gets the right answer. Until square#121 the check used the key
+that same host returned from `/info`, which established only that the host was
+self-consistent: a party who could answer for it could serve its own group key
+and a signature valid under that key, and the check passed. The pin is
+self-checking — `assertQuicknet` recomputes drand's chain hash from the
+parameters served and compares it to the announced
+`52db9ba7…e971`, which binds the public key, the genesis time, the period and
+the group seed to one value nobody serving the response controls.
+
+The pin itself was checked against the live chain before #16 was opened, on
+2026-09-15 at 14:13 UTC:
+
+```console
+$ LIVE=1 npx vitest run test/drand-beacon.test.js -t "against the live chain"
+ ✓ against the live chain (LIVE=1) > serves parameters that hash to the pinned chain
+ ✓ against the live chain (LIVE=1) > signs rounds verifiably under the pinned key
+ Tests  2 passed | 15 skipped (17)
+```
+
+Both claims are about drand as it answered then. `api.drand.sh`'s quicknet
+parameters hash to the pinned chain hash, and the latest round's signature
+verifies under the pinned group key but not as the round before it. The
+`circuits` job repeats the check on every pull request, in its own step
+(square#260), so a pin copied wrong or a chain drand has rotated turns a
+required check red before a ceremony depends on it.
+
+[verifying.md](./verifying.md) walks the same ground with individual `snarkjs`
+commands, for anyone who would rather not run our script to check our ceremony.
+That is the better instinct and the reason both exist.
+
+## What it looks like when it works
+
+From a rehearsal against the real drand chain, with two throwaway contributions
+and quicknet round 32206349 as the beacon. This is not the ceremony — it is the
+evidence that the machinery does what this document says. Re-recorded on the
+merge of square#227, #228, #229 and #234, so every line below is one of their
+checks. After `finalize`, the ceremony's verifying key was copied to
+`build/payment_vk.json`, which is what installing it as the repository's key
+comes to:
+
+```console
+$ node scripts/ceremony.mjs verify-chain
+phase 1
+  ok    ppot_0080_14.ptau matches the adopted Perpetual Powers of Tau contribution 80
+
+circuit
+  ok    the compiled circuit matches the one the ceremony started from
+  ok    compiled with circom compiler 2.2.3, as the ceremony was
+  ok    circomlib 2.0.5, as the ceremony had
+  ok    payment.circom is byte-identical to the ceremony's
+  ok    lib/timestamp.circom is byte-identical to the ceremony's
+
+chain
+  ok    the keys on disk end at payment_0002.zkey, where the transcript ends
+  ok    the final key verifies against the circuit and the adopted ptau
+  ok    2 contribution(s), as many as the transcript records
+  ok    every contribution in the key is the one the transcript records, in order
+
+beacon
+  ok    beacon is drand quicknet round 32206349, matching the public chain
+  ok    the round's BLS signature verifies against quicknet's pinned group key
+  ok    the recorded round and time are consistent (arithmetic, not a timing check)
+  ok    the beacon round lands after the last contribution (2026-09-14T21:45:39.964Z)
+
+keys
+  ok    the verifying key is the one the final key exports
+  ok    and it is unchanged since the transcript recorded it
+  ok    the repository's verifying key, build/payment_vk.json, is the one the final key exports
+
+All checks passed. The chain is what the transcript says it is.
+```
+
+The same rehearsal before that copy, with the development key still in
+`build/payment_vk.json`, fails on one line, and it is the line that should fail:
+until [#16][i16] installs the ceremony's key, the repository's key is not this
+ceremony's output.
+
+```console
+keys
+  ok    the verifying key is the one the final key exports
+  ok    and it is unchanged since the transcript recorded it
+  FAIL  the repository's verifying key, build/payment_vk.json, is not the one the final key exports: payment_vk.json is not what payment_final.zkey exports
+
+1 check(s) failed.
+```
+
+And when it does not. A transcript claiming a different round than the key
+actually carries:
+
+```console
+$ node scripts/ceremony.mjs verify-chain
+beacon
+  FAIL  beacon in the key does not match drand round 31966441
+  FAIL  the recorded round and time disagree
+
+2 check(s) failed.
+$ echo $?
+1
+```
+
+A chain with a single contributor is rejected as well, whatever else is in
+order:
+
+```console
+  ok    1 contribution(s), as many as the transcript records
+  FAIL  fewer than two independent contributions — this is not a multi-party ceremony
+```
+
+And a transcript that names contributors the key does not hold. From the same
+rehearsal, with the two records renamed and their hashes replaced — the shape of
+a chain re-run privately after the public one (square#229; the hashes are
+abbreviated here, the tool prints them whole):
+
+```console
+chain
+  ok    the final key verifies against the circuit and the adopted ptau
+  ok    2 contribution(s), as many as the transcript records
+  FAIL  contribution 1 (Alice): the key's transcript hash c336ec06…46360d is not the transcript's 11111111…11111111
+  FAIL  contribution 1: the key records "Alice (rehearsal)", the transcript "Alice"
+  FAIL  contribution 2 (Bob): the key's transcript hash 541ee4ee…c33688 is not the transcript's 22222222…22222222
+  FAIL  contribution 2: the key records "Bob (rehearsal)", the transcript "Bob"
+
+4 check(s) failed.
+```
+
+Before square#229 that transcript printed `ok 2 contribution(s), matching the
+transcript` and the run ended with "All checks passed".
+
+## Publishing
+
+The transcript, every contribution hash, the final key, the verifying key and
+the beacon round go wherever [README.md](./README.md) says — that location is
+one of the open decisions. [verifying.md](./verifying.md) assumes all of it is
+fetchable without asking anyone, which is the standard to publish against.
+
+Once that is done [#16][i16] closes,
+[#17](https://github.com/Square-StellarNetwork/square/issues/17) generates the Solidity
+verifier from the final key, and the demo-setup language tracked by
+[#3](https://github.com/Square-StellarNetwork/square/issues/3) comes off.

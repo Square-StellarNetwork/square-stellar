@@ -1,0 +1,53 @@
+name: a2a
+
+# Typecheck and test @squaresdk/a2a.
+#
+# Hermetic: the package has no dependencies and no chain client, and its
+# end-to-end suite talks to an HTTP server it starts on loopback. Nothing here
+# reaches the network.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/a2a/**"
+      - "docs/a2a/**"
+      - ".github/workflows/a2a.yml"
+  # No path filter on pull_request, deliberately. A required status check that a
+  # filter skips never reports, and GitHub blocks the merge waiting for a run
+  # that will not happen. The push filter above still keeps main's runs narrow.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: a2a
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/a2a
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The package's whole reason for existing is an absence, and an absence is
+      # easy to lose. This is the check that would catch it coming back.
+      - name: The agent cannot pay itself
+        run: npx vitest run test/no-self-settlement.test.ts

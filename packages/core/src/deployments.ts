@@ -1,0 +1,195 @@
+import { getAddress, isAddress, type Address } from "viem";
+
+export interface SquareDeployment {
+  chainId: number;
+  squareJob: Address;
+  keeperEvaluator: Address;
+  arbitration: Address;
+  claimMarket: Address;
+  squareHook: Address;
+  usdc: Address;
+  identityRegistry: Address;
+  reputationRegistry: Address;
+  validationRegistry: Address;
+  /**
+   * The compliance module `SquareHook` calls (#27), when the record names one.
+   * Optional because a stack can run without it, as the shared Arc stack does;
+   * `DeployLocal` writes it. Its events are decoded and indexed when it is set
+   * (#250).
+   */
+  complianceModule?: Address;
+  /**
+   * The sanctions screening registry the hook reads at funding and at
+   * release (#35), when the record names one. Optional for the same reason
+   * as the module: the shared Arc stack carries none, `DeployLocal` writes
+   * it. What the hook actually screens with is read from the hook
+   * (`SquareClient.screening`); this is the record's copy, for a caller that
+   * addresses the registry directly.
+   */
+  screeningRegistry?: Address;
+  startBlock?: bigint;
+}
+
+export const ARC_TESTNET_CHAIN_ID = 5042002;
+export const ANVIL_CHAIN_ID = 31337;
+
+export const ARC_TESTNET_RPC_URL = "https://rpc.testnet.arc.io";
+
+/**
+ * Everything about a chain that is not a contract address.
+ *
+ * The addresses come out of `contracts/deployments/<chainId>.json`, which a
+ * forge script writes; these do not, so they live here. Both halves are keyed
+ * by chain id and both are read through this module, because the alternative
+ * is what this repository had until #49: the chain id declared in four
+ * packages, USDC in two, and the registry in two with different casing.
+ */
+export interface NetworkProfile {
+  chainId: number;
+  name: string;
+  rpcUrl: string;
+  /** Undefined when the chain has no block explorer, as a local node does not. */
+  explorerUrl: string | undefined;
+  /**
+   * Arc settles gas in USDC and the native interface reports 18 decimals,
+   * while the ERC-20 at `usdc` reports 6. This is the native one, because it
+   * is what an `eth_getBalance` result is denominated in.
+   * See docs/decisions/erc20-vs-native-usdc.md.
+   */
+  nativeCurrency: { name: string; symbol: string; decimals: number };
+}
+
+export class UnknownNetworkError extends Error {
+  constructor(public readonly chainId: number) {
+    super(`No network profile is known for chain ${chainId}`);
+    this.name = "UnknownNetworkError";
+  }
+}
+
+export const ANVIL_RPC_URL = "http://127.0.0.1:8545";
+export const ARC_TESTNET_EXPLORER_URL = "https://testnet.arcscan.app";
+
+const arcTestnetNetwork: NetworkProfile = {
+  chainId: ARC_TESTNET_CHAIN_ID,
+  name: "Arc Testnet",
+  rpcUrl: ARC_TESTNET_RPC_URL,
+  explorerUrl: ARC_TESTNET_EXPLORER_URL,
+  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+};
+
+const anvilNetwork: NetworkProfile = {
+  chainId: ANVIL_CHAIN_ID,
+  name: "Anvil",
+  rpcUrl: ANVIL_RPC_URL,
+  explorerUrl: undefined,
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+};
+
+export const networks: Readonly<Record<number, NetworkProfile>> = {
+  [ANVIL_CHAIN_ID]: anvilNetwork,
+  [ARC_TESTNET_CHAIN_ID]: arcTestnetNetwork,
+};
+
+export function networkFor(chainId: number): NetworkProfile {
+  const found = networks[chainId];
+  if (!found) throw new UnknownNetworkError(chainId);
+  return found;
+}
+
+export class UnknownDeploymentError extends Error {
+  constructor(public readonly chainId: number) {
+    super(`No Square deployment is known for chain ${chainId}`);
+    this.name = "UnknownDeploymentError";
+  }
+}
+
+export class InvalidDeploymentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidDeploymentError";
+  }
+}
+
+const localAnvil: SquareDeployment = {
+  chainId: ANVIL_CHAIN_ID,
+  usdc: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  identityRegistry: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  reputationRegistry: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+  validationRegistry: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+  squareJob: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+  keeperEvaluator: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+  arbitration: "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+  claimMarket: "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+  squareHook: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+  complianceModule: "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+  screeningRegistry: "0x9A676e781A523b5d0C0e43731313A708CB607508",
+};
+
+const arcTestnet: SquareDeployment = {
+  chainId: ARC_TESTNET_CHAIN_ID,
+  usdc: "0x3600000000000000000000000000000000000000",
+  identityRegistry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+  reputationRegistry: "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+  validationRegistry: "0x8004Cb1BF31DAf7788923b405b754f57acEB4272",
+  squareJob: "0x76E8690cEa9d94df810eE6b1F453866f0ee68c7B",
+  keeperEvaluator: "0x08100b5211463861f26aC8Bc73Df32A8A2f6ebbD",
+  arbitration: "0x1c6Be0d4a84a8F0770341269393EaB13098866C2",
+  claimMarket: "0x54cd26490dF9212DC6187C73CC07132cd39A1a36",
+  squareHook: "0xb44aCCBb8d1eae0e2D2e8B33CEC32f1fD613e7e6",
+};
+
+export const deployments: Readonly<Record<number, SquareDeployment>> = {
+  [ANVIL_CHAIN_ID]: localAnvil,
+  [ARC_TESTNET_CHAIN_ID]: arcTestnet,
+};
+
+export function deploymentFor(chainId: number): SquareDeployment {
+  const found = deployments[chainId];
+  if (!found) throw new UnknownDeploymentError(chainId);
+  return found;
+}
+
+const jsonKeys = {
+  squareJob: "SquareJob",
+  keeperEvaluator: "KeeperEvaluator",
+  arbitration: "Arbitration",
+  claimMarket: "ClaimMarket",
+  squareHook: "SquareHook",
+  usdc: "USDC",
+  identityRegistry: "IdentityRegistry",
+  reputationRegistry: "ReputationRegistry",
+  validationRegistry: "ValidationRegistry",
+} as const;
+
+export function deploymentFromJson(json: unknown): SquareDeployment {
+  if (typeof json !== "object" || json === null) throw new InvalidDeploymentError("deployment is not an object");
+  const record = json as Record<string, unknown>;
+  const chainId = Number(record["chainId"]);
+  if (!Number.isInteger(chainId) || chainId <= 0) throw new InvalidDeploymentError("chainId is missing");
+  const out: Record<string, unknown> = { chainId };
+  for (const [field, key] of Object.entries(jsonKeys)) {
+    const value = record[key];
+    if (typeof value !== "string" || !isAddress(value)) {
+      throw new InvalidDeploymentError(`${key} is not an address`);
+    }
+    out[field] = getAddress(value);
+  }
+  for (const [field, key] of [
+    ["complianceModule", "ComplianceModule"],
+    ["screeningRegistry", "ScreeningRegistry"],
+  ] as const) {
+    const value = record[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" || !isAddress(value)) {
+      throw new InvalidDeploymentError(`${key} is not an address`);
+    }
+    out[field] = getAddress(value);
+  }
+  const block = record["block"];
+  if (block !== undefined && block !== null) {
+    const parsed = typeof block === "number" || typeof block === "string" ? BigInt(block) : null;
+    if (parsed === null || parsed < 0n) throw new InvalidDeploymentError("block is not a block number");
+    out["startBlock"] = parsed;
+  }
+  return out as unknown as SquareDeployment;
+}

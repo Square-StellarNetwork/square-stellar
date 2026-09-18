@@ -1,0 +1,376 @@
+# @squaresdk/hardening
+
+Chain-agnostic security layer for Square services. Five independent modules, one package:
+
+| Module | Defends against |
+|---|---|
+| `ssrf` | Server-side request forgery: loopback, LAN, link-local metadata endpoints, obfuscated IP literals, DNS rebinding, redirect laundering, unbounded responses |
+| `idempotency` | Duplicate side effects from client retries, idempotency-key reuse with a different payload |
+| `rateLimit` | Abuse and brute force, with counters that survive restarts and are shared across instances |
+| `rpcFailover` | Single-provider RPC outages, retry storms against a dead endpoint, invisible failovers, health ledgers poisoned by answers the chain gave |
+| `signedMessages` | Signatures reused for another actor, replayed messages, stale or premature messages, cross-chain replay |
+
+Tables live in `@squaresdk/data`, not here: `idempotency_keys` and `rate_limits` are created by `square-data migrate up`
+and swept by `square-data sweep`. This package ships no DDL.
+
+Everything here was written from a requirements brief and public specifications (RFC 1918, RFC 4193, RFC 6890,
+RFC 8785, EIP-712, the IETF RateLimit header draft). Nothing was copied from another repository, and no code in
+this package derives from any other codebase. License: Apache-2.0.
+
+## Install
+
+```bash
+npm install @squaresdk/hardening viem hono   # once the v0.1.0 tag is on npm (square#356)
+```
+
+Not on npm yet: the packages publish under `@squaresdk` from a `v<version>` tag
+([docs/decisions/distribution-channel.md](../../docs/decisions/distribution-channel.md)),
+and the first has not been cut. Until then, from this repository, after
+`@squaresdk/data` beside it is built:
+
+```bash
+(cd packages/data && npm install && npm run build)
+(cd packages/hardening && npm install --install-links && npm run build)
+npm install ../path/to/square/packages/hardening viem hono
+```
+
+`viem` and `hono` are peer dependencies. `viem` backs the RPC failover transport and EIP-712 signing; `hono` is only
+needed for the two middleware factories. `undici` is a regular dependency because the SSRF-safe fetch needs a
+connector whose address resolution can be pinned.
+
+Node 20 or newer.
+
+## SSRF-safe fetch
+
+```ts
+import { assertPublicUrl, safeFetch, safeFetchFollowingRedirects, SsrfError } from "@squaresdk/hardening";
+
+const validated = await assertPublicUrl("https://example.com/webhook");
+
+const response = await safeFetch("https://example.com/webhook", { method: "POST", body }, { timeoutMs: 5_000 });
+
+const followed = await safeFetchFollowingRedirects(url, {}, { maxRedirects: 3, maxResponseBytes: 1_000_000 });
+```
+
+`assertPublicUrl` rejects, in this order and without touching DNS when it does not need to:
+
+- any scheme other than `http:` or `https:`
+- userinfo in the URL (`http://user:pw@host/`)
+- ports outside the allowlist (default `80` and `443`)
+- `localhost` and `*.localhost`
+- IP literals that are not public, including the obfuscated forms an attacker uses to slip past string checks:
+  `0x7f.1`, `2130706433`, `017700000001`, `127.1`, `[::ffff:127.0.0.1]`. The literal is parsed by this package
+  before anything else looks at it; the WHATWG URL parser canonicalises most of these too, which makes two independent
+  layers
+- names whose resolution contains any non-public address. The lookup uses `dns.promises.lookup({ all: true })` and
+  one bad address in the set is enough to refuse
+
+The address classifier covers IPv4 unspecified, loopback, RFC 1918, CGNAT, link-local, multicast, reserved, the
+documentation and benchmarking ranges, and the IPv6 equivalents: `::`, `::1`, ULA, link-local, site-local, multicast,
+the discard prefix, plus every form that embeds an IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, Teredo, NAT64),
+which is classified by the embedded address. `classifyAddress` and `isPublicAddress` are exported so the same rules can
+be reused elsewhere.
+
+### DNS rebinding
+
+Validating a name and then calling `fetch` on it is a race: the second resolution can return a different address.
+`safeFetch` therefore never resolves twice. The addresses that passed validation are handed to an `undici.Agent` whose
+`connect.lookup` answers only from that list, so the socket goes to the validated address while the `Host` header,
+SNI and certificate verification still use the hostname. When the pinned address cannot be reached the request
+fails; it does not fall back to a fresh resolution.
+
+### Redirects
+
+`safeFetch` never follows redirects. A 3xx comes back as-is and the caller decides. Passing `redirect: "follow"`
+is refused up front. `safeFetchFollowingRedirects` follows up to `maxRedirects` hops and runs the full validation on
+every hop, so a public host redirecting to `http://169.254.169.254/` or to a forbidden port is stopped at that hop.
+It also applies the fetch rules that matter for safety: 303 and POST-to-301/302 become GET without a body,
+`Authorization`, `Proxy-Authorization` and `Cookie` are dropped when the origin changes, and a body that can only be
+read once is refused on 307/308 instead of being sent empty.
+
+### Responses
+
+Bodies are capped at `maxResponseBytes` (default 10 MiB). A declared `Content-Length` above the cap is refused before
+any byte is read; otherwise the body streams through a counter that errors the stream and aborts the connection when
+the cap is crossed. `timeoutMs` (default 10 s) covers connect, headers and body. Everything is reported through
+`SsrfError`, whose `code` is a closed union you can switch on.
+
+### Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `allowedPorts` | `[80, 443]` | Ports the URL may target |
+| `allowPrivate` | `false` | Skip the address checks. Only for tests against a local server |
+| `lookup` | `dns.promises.lookup` | Replace name resolution. Tests use it to script answers |
+| `timeoutMs` | `10000` | Total time budget for the request |
+| `maxResponseBytes` | `10485760` | Body cap |
+| `maxRedirects` | `5` | Hops for `safeFetchFollowingRedirects` |
+
+## Idempotency
+
+```ts
+import { pgDatabase } from "@squaresdk/data";
+import {
+  hashRequest,
+  idempotencyMiddleware,
+  idempotencyScope,
+  pathWithCanonicalQuery,
+  postgresIdempotencyStore,
+  withIdempotency,
+} from "@squaresdk/hardening";
+
+const store = postgresIdempotencyStore(pgDatabase(databaseUrl));
+
+app.use("/orders", idempotencyMiddleware(store, { scope: "orders", required: true, actorOf: (c) => c.get("actor") }));
+
+const execute = withIdempotency(store, async ({ payout }) => runPayout(payout), { ttlMs: 86_400_000 });
+const outcome = await execute({
+  scope: idempotencyScope("payouts", actor),
+  key,
+  requestHash: hashRequest({ method, path: pathWithCanonicalQuery(url), body, actor }),
+  payout,
+});
+```
+
+`hashRequest` hashes a canonical serialisation of method, path, body and actor (sorted keys, no whitespace), so
+`{a:1,b:2}` and `{b:2,a:1}` are the same request and the same key sent by a different actor is not.
+
+**The query string is canonicalised too, on the same rule as the body.** The middleware hashes
+`pathWithCanonicalQuery(c.req.url)`, which keeps the path exactly as sent and sorts the query parameters by name and
+then by value, so `?a=1&b=2` and `?b=2&a=1` are one request and a client that reorders its parameters on a retry
+replays instead of collecting a 409. `canonicalQuery` and `pathWithCanonicalQuery` are exported so a caller who builds
+its own fingerprint for `withIdempotency` can apply the same rule. The path itself is still hashed as sent, so
+`/orders/1` and `/orders/01` remain different requests.
+
+**The key space belongs to one caller, never to all of them.** The store is keyed by `(scope, key)`, and the scope the
+middleware writes is `idempotencyScope(options.scope, actor)`, so two tenants sending the same `Idempotency-Key` never
+see each other's response and never make each other's key conflict. `actorOf` is required for that reason: it has no
+default, because a default would have to be "everyone is the same caller". A keyed request whose actor `actorOf` cannot
+name is refused with `{ status: 400, body: { error: "idempotency_actor_unknown" } }`; a service with genuinely
+anonymous routes has to choose the identity it wants to share, rather than inherit one. `withIdempotency` takes the
+scope per call, in `input.scope`, so the same executor serves every caller.
+
+`withIdempotency` returns a function that:
+
+1. replays the stored response when the key is known and the request hash matches
+2. answers `{ status: 409, body: { error: "idempotency_key_reused" } }` when the key is known with a different hash
+3. otherwise runs the handler and stores the result with `putIfAbsent`
+
+Responses the `shouldStore` policy rejects are not stored, so a failed attempt can be retried with the same key. The
+default rejects anything 5xx and the three statuses that mean "not now" rather than "not this": 408, 425 and 429. A
+client that waits out `Retry-After` and comes back with the same key is doing what an idempotency key exists for, so
+it reaches the handler again instead of collecting the stored refusal for the rest of the TTL. `defaultShouldStore`
+and `TRANSIENT_REJECTION_STATUSES` are exported, so a stricter policy can be built on top of the default rather than
+beside it. A response marked with `markTransientRejection(c)` is never stored whatever the policy says, and
+`rateLimitMiddleware` marks its own 429, so this package cannot store a refusal it produced itself. Duplicates that
+arrive while the first one is still running inside the same process wait for it
+and then replay. Across processes the store decides: `putIfAbsent` is atomic, the first writer wins, and the second
+caller receives the first writer's response. A handler that is not safe to run twice concurrently across processes
+should additionally take a per-key lock; the store interface deliberately does not hide that.
+
+`postgresIdempotencyStore` takes a `Database` from `@squaresdk/data` (`pgDatabase(url)` in a service,
+`pgliteDatabase()` in a test) and holds no SQL of its own. Every statement it runs comes from the `idempotencyKeys`
+repository in `@squaresdk/data`, which is the one implementation of the `idempotency_keys` table: the table is created
+by migration `0002_hardening`, the claim and the reads live in the repository, and this package is the HTTP shape on
+top of them. This package ships no `create table` and no query text on purpose, because a second definition of the
+same table, or of the same claim, is how a schema and its semantics drift apart. Run `square-data migrate up` with
+`DATABASE_URL` set before the service starts.
+
+The claim is a single `insert ... on conflict do update ... where expires_at <= now()`, so an expired row is reclaimed
+in place and a live row is never overwritten. If the row is claimed by someone else and then expires before this
+process can read it back, the repository retries a bounded number of times and then throws rather than looping.
+
+**The lifetime is measured on one clock, the database's.** `ttlMs` is sent as a number and `expires_at` is computed in
+SQL as `now() + ($n::double precision * interval '1 millisecond')`, so the side that writes the expiry and the two
+sides that decide it has passed (`where expires_at <= now()` on the claim, `where expires_at > now()` on the read) all
+read the same clock. A service whose own clock has drifted still gets exactly the TTL it asked for, and a drift larger
+than the TTL can no longer write a row that is expired the moment it is stored. `StoreClockOptions.now` remains on
+`memoryIdempotencyStore`, where both sides are that same injected clock.
+
+Expired rows are removed by `square-data sweep`, not by this package.
+
+The Hono middleware reads `Idempotency-Key` (configurable `header`), applies to `POST`, `PUT`, `PATCH` and `DELETE`
+(configurable `methods`), hashes the parsed JSON body (or the raw text), marks replays with `Idempotent-Replayed: true`,
+and returns 400 when `required` is set and the header is missing. It takes `ttlMs` and `shouldStore` and passes both to
+`withIdempotency`, so a route that should not remember a 4xx can say
+`shouldStore: (response) => response.status < 400` instead of reaching for the lower layer.
+
+**A replay carries the first response's headers, not only its status and body.** `Location`, `ETag`, `Set-Cookie` and
+everything else the handler set come back as the first caller saw them, so a client that lost the connection to
+`POST /orders` still learns the address of the resource it created, and a `POST` that opened a session still receives
+its cookie. Several `Set-Cookie` headers are captured through `getSetCookie()` and replayed one `append` at a time, so
+two cookies are never folded into one line. Ten headers are regenerated rather than replayed, because they describe
+this response and not the stored one: `Date`, `Content-Length`, and the hop-by-hop set (`Connection`, `Keep-Alive`,
+`Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`). The headers ride in the
+`response` column beside the body text, inside the JSON document the store already held, so this costs no schema
+change, and a row written before this shape existed still replays with the content type it recorded.
+
+## Rate limiting
+
+```ts
+import { memoryRateLimitStore, postgresRateLimitStore, rateLimitMiddleware, rateLimiter } from "@squaresdk/hardening";
+
+const store = postgresRateLimitStore(pool);
+
+app.use("/api/*", rateLimitMiddleware(store, { limit: 100, windowMs: 60_000, keyOf: (c) => c.get("actor") }));
+
+const limiter = rateLimiter(store, { limit: 5, windowMs: 3_600_000, keyOf: (job: Job) => job.tenant });
+const { allowed, remaining, resetAt } = await limiter.check(job);
+```
+
+Fixed windows: the bucket for `keyOf(ctx)` is incremented for the window containing `now`, and the request is allowed
+while the count is at or below `limit`. Fixed windows permit up to twice the limit across a window boundary; that is
+the price of a single upsert per request and no coordination.
+
+Durability lives in the store, not in the limiter. `memoryRateLimitStore` forgets on restart and is per process.
+`postgresRateLimitStore` uses `rate_limits(bucket, window_start, count)` with
+`insert ... on conflict (bucket, window_start) do update set count = rate_limits.count + 1 returning count`, so every
+instance sees the same counters and a restart changes nothing. The table comes from `@squaresdk/data` migration
+`0002_hardening`, created by `square-data migrate up` and by nothing else; finished windows are removed by
+`square-data sweep`.
+
+Both stores expose `prune(olderThanMs)`, which drops every window that started before that instant. The memory store
+is also bounded: it holds at most `maxEntries` buckets (default `MEMORY_RATE_LIMIT_MAX_ENTRIES`, 10 000) and evicts the
+least recently used one beyond that, so a caller who can choose the bucket key cannot grow the process without limit.
+Eviction resets the evicted bucket's counter, which is the honest cost of a bounded map: when the key space is
+attacker-chosen, use `postgresRateLimitStore`, where the counters are rows and the cap is disk.
+
+The middleware sets `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds) on every response and
+answers 429 with `Retry-After` when the limit is exceeded. `keyOf` is required on purpose: keying on
+`X-Forwarded-For` is only correct behind a proxy you control, and the package should not guess that for you.
+
+## RPC failover
+
+```ts
+import { createFailoverTransport, withRpcRetry } from "@squaresdk/hardening";
+import { createPublicClient } from "viem";
+
+const transport = createFailoverTransport(["https://rpc-a.example", "https://rpc-b.example"], {
+  baseCooldownMs: 2_000,
+  maxBackoffMs: 60_000,
+  onFailover: (from, to, error) => metrics.increment("rpc.failover", { from, to, reason: error.name }),
+});
+
+const client = createPublicClient({ transport });
+transport.getHealth();
+
+const receipt = await withRpcRetry(() => client.getTransactionReceipt({ hash }), { attempts: 4, baseDelayMs: 250 });
+```
+
+The transport is viem's `fallback([...http(url)])` with health tracking around each endpoint. An endpoint that fails
+`failureThreshold` logical requests in a row (default 1) enters a cooldown of `baseCooldownMs * 2^n` capped at
+`maxBackoffMs`, where `n` grows with every further consecutive failure and resets on the first success. Endpoints keep their
+configured priority; a cooling endpoint is skipped as long as a healthier one follows it in the list, and once the
+cooldown ends it is tried again. If every endpoint is cooling down the request is still sent to them in order, so a
+brief outage degrades the client instead of failing it closed. `onFailover(from, to, error)` fires each time a request
+moves from a failed endpoint to the next one, with the error the failed endpoint produced. `getHealth()` returns a
+snapshot per endpoint: healthy flag, consecutive failures, cooldown deadline, last error and timestamps.
+
+**A revert is an answer, not an outage.** Only a failure to answer moves an endpoint's ledger: an HTTP status error, a
+timeout, a dropped connection, a `-32603` internal error, or anything else the endpoint produced in place of a result.
+A request the node answered at the JSON-RPC level leaves `consecutiveFailures`, the cooldown, `lastError` and the
+routing untouched and fires no `onFailover`: a reverted `eth_call`, code `3`, a `-32000` whose message is an execution
+rejection (`execution reverted`, `gas required exceeds allowance`, `nonce too low`, `already known` and their
+neighbours), and the deterministic request errors `-32700`, `-32600`, `-32601` and `-32602`. Without that rule a keeper
+that simulates `finalize` every tick and gets `WindowOpen` back cools its primary endpoint down on the first simulation
+and has both endpoints marked sick by the fourth, with a contract message as the recorded `lastError`.
+`isEndpointFailure(error)` is exported, and the `isEndpointFailure` option replaces it per transport for a provider
+whose codes need a different reading. It asks a different question from `isPermanentRpcError`, which asks whether
+another attempt is worth making: `-32603` is permanent for the retry loop and still the endpoint's fault, while
+`-32000` is retryable and, when it carries a revert, not the endpoint's fault at all.
+
+**One logical request is one upstream call per endpoint.** The `fallback` wrapper is built with `retryCount: 0`
+unless the caller asks for more, so a request walks the endpoint list once: two dead endpoints cost two upstream
+calls, not the eight that viem's own default of three retries would add, and the three-endpoint shape above under
+`withRpcRetry({ attempts: 4 })` costs twelve calls rather than forty-eight. Retrying belongs to `withRpcRetry`, where
+it is visible, countable and applied only after the whole list has been tried once. Health is counted on the same
+unit: an endpoint that fails inside one logical request adds one to `consecutiveFailures` however many times the
+transport called it, so one bad request leaves it cooling for `baseCooldownMs` rather than for `baseCooldownMs * 8`.
+
+`transportFactory` swaps `http(url)` for anything else, which is how the tests use `custom()` transports.
+
+`withRpcRetry(fn, options)` retries any async call with equal-jitter exponential backoff (`baseDelayMs`, `maxDelayMs`)
+for `attempts` tries.
+
+`signal` stops the loop at three points: before the first call, where an already-aborted signal means `fn` never runs
+and the signal's abort reason is thrown; after a failed attempt, where an aborted signal rethrows that attempt's error
+instead of retrying; and during the backoff sleep, which races the signal, so an abort ends the wait immediately rather
+than after up to `maxDelayMs`. Once the loop is entered, the error the caller sees is always the one the last attempt
+produced.
+
+`isRetryable` decides which errors are worth another attempt. The default retries transient failures and refuses two
+classes: an `AbortError`, and a permanent JSON-RPC error, meaning code `-32600`, `-32601`, `-32602` or `-32603`, or a
+message containing `execution reverted`. The code is read from the error and from its `cause` chain, so a wrapped viem
+error is classified the same way. Everything else, `-32000` server errors and socket failures included, is retried:
+a deterministic client error costs one call, not `attempts` calls with backoff between them. `isPermanentRpcError` is
+exported so the same rule can be reused or extended in a custom predicate.
+
+## Signed messages
+
+```ts
+import { memoryNonceStore, signAction, verifyAction } from "@squaresdk/hardening";
+
+const message = { actor: account.address, action: "settle", resource: "invoice:42", nonce, issuedAt, expiresAt, chainId };
+const signature = await signAction(account, message);
+
+const result = await verifyAction({ message, signature, expectedActor: session.actor, nonceStore, expectedChainId: 5042002 });
+if (!result.ok) reject(result.reason);
+```
+
+The EIP-712 type is `SquareAction { actor, action, resource, nonce, issuedAt, expiresAt, chainId }` under the domain
+`{ name: "Square", version: "1", chainId }`. `verifyAction` recovers the signer and requires it to equal both
+`message.actor` and `expectedActor`; a signature is therefore only ever valid for the one actor the server was already
+talking to. It then checks `issuedAt <= now < expiresAt` (unix seconds) and consumes the nonce from the `NonceStore`,
+which happens last so a rejected message never burns a nonce. It never throws for a bad signature: every failure is a
+`{ ok: false, reason }` with one of `invalid_signature`, `actor_mismatch`, `unexpected_actor`, `not_yet_valid`,
+`expired`, `nonce_reused`, `chain_mismatch`, `missing_expected_chain_id`, `malformed_message`.
+
+`verifyAction` also caps how long a message may live: `expiresAt - issuedAt` may not exceed `maxLifetimeSeconds`
+(default `DEFAULT_MAX_ACTION_LIFETIME_SECONDS`, 300). Without a cap the signer decides how long the verifier has to
+remember its nonce, and a message that expires in a thousand years is a nonce no store can ever drop. The cap is
+checked before the signature is recovered, and a message that exceeds it is refused with `malformed_message` without
+burning a nonce.
+
+`expectedChainId` is required. A `SquareAction` carries its own `chainId` and the domain is built from it, so a
+signature made for one chain recovers correctly on any verifier that does not say which chain it is: the check exists
+only if the caller asks for it, so the caller is not allowed to leave it out. A call that reaches `verifyAction`
+without one is refused with `missing_expected_chain_id` before the signature is recovered and without burning a nonce.
+
+`memoryNonceStore` is per process; back the interface with your database for anything that runs on more than one
+instance. It holds one entry per actor and one entry per nonce, and `consume` is a single map lookup: it reads the
+expiry recorded for that one nonce and never walks the actor's other nonces, so the cost of a verification does not
+grow with the number of nonces the actor is holding. Expired entries are dropped by a sweep that runs at most once
+every `pruneIntervalSeconds` (default `MEMORY_NONCE_PRUNE_INTERVAL_SECONDS`, 60) instead of every n calls, so a burst
+cannot turn the hot path into a full scan. The sweep drops actors whose nonces have all expired, so an actor that
+never returns is not carried for the life of the process, and the lifetime cap above bounds what one actor can pile
+up between two sweeps. `prune()` runs that pass on demand and returns the number of actors it dropped; `size()`
+reports how many actors are held.
+
+`canonicalJson(value)` is the RFC 8785-style serialiser used by `hashRequest`, exported for reuse: sorted
+keys, no whitespace, numbers exactly as JSON prints them, `toJSON` honoured, and it refuses `NaN`, `Infinity`, bigint
+and top-level `undefined` rather than producing a form that could collide.
+
+**Only a plain object carries its whole state in its own enumerable keys, so only a plain object is serialised.** A
+`Map`, a `Set`, and an instance of a class that keeps its state in private fields or accessors all answer
+`Object.keys` with nothing, which would make every one of them the same `{}` and hand two unrelated requests one
+hash. A typed array is the other half of the same problem: its indices are own keys, so it would serialise as the
+plain object with those indices and collide with it. Each is refused with a `TypeError` that names what it saw. The
+escape hatch is the one JSON already defines: give the class a `toJSON` method and it is serialised through that,
+before the check runs. Objects created with `Object.create(null)` are serialised, because all of their state is own
+enumerable keys too.
+
+## Tests
+
+```bash
+npm test
+```
+
+All tests are hermetic. DNS is scripted through the `lookup` option, the RPC endpoints are `custom()` transports, the
+Postgres stores run against a fake `db` that records the SQL it was given, and the only sockets are to a
+`node:http` server on `127.0.0.1` (which requires `allowPrivate: true` for that suite). The rebinding proof scripts a
+lookup that answers `127.0.0.1` once and `::1` afterwards: the request reaches the server, the lookup is called
+exactly once, and a run that pins `::1` first fails instead of falling back to a resolution that would have worked.
+
+## License
+
+Apache-2.0

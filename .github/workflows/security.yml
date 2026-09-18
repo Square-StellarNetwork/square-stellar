@@ -1,0 +1,67 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
+      # gitleaks-action organizasyonlarda GITLEAKS_LICENSE istiyor; CLI istemiyor.
+      #
+      # The tarball is checked against the sha256 from the release's own
+      # checksums file before anything is extracted, the same rule
+      # .github/actions/circom applies to the compiler and docs/ci.md records
+      # under "Pinned tooling": an unverified download means whoever can
+      # answer for github.com chooses what scans this repository for secrets.
+      # -f on curl, so an HTTP error page is a failure rather than tar input.
+      - name: gitleaks (CLI)
+        run: |
+          set -euo pipefail
+          VER=8.28.0
+          SHA256=a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+          curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          # --verbose birlikte --redact ile: bulgunun kural adini, dosyasini ve satirini
+          # basar, degerini basmaz. Onsuz cikti yalnizca "leaks found: N" oluyor ve
+          # zorunlu bir kapi neyi reddettigini soylemeden merge'i durduruyor (square#174).
+          ./gitleaks detect --source . --redact --no-banner --exit-code 1 --verbose --log-opts=HEAD
+
+  grep:
+    name: forbidden strings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: no private key material
+        run: |
+          set -euo pipefail
+          # Private key material must never be committed.
+          if grep -rInE 'BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY' --exclude-dir=.git .; then
+            echo "::error::private key material committed"
+            exit 1
+          fi
+      # The trusted setup is a demo until the public ceremony (#16) completes.
+      #
+      # Patterns live in docs/disclosure/forbidden-phrases.txt so the enforced
+      # list and the documented list cannot drift apart, and the script
+      # self-tests against docs/disclosure/guard-fixtures/ first, so a gutted
+      # pattern list fails loudly instead of passing everything.
+      #
+      # Deliberate disclaimers are marked with "ci-allow-phrase" on the line,
+      # keeping the exception visible so the rule cannot be silenced by
+      # accident. That marker is main's mechanism and it is kept as-is; it
+      # replaces the blanket directory exemption this branch used to carry.
+      - name: no production-ZK claims
+        run: .github/scripts/check-forbidden-phrases.sh

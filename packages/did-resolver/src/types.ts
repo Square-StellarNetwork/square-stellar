@@ -1,0 +1,162 @@
+/** Errors a resolver may report. DID Resolution defines the first three. */
+export type ResolutionErrorCode =
+  | "invalidDid"
+  | "notFound"
+  | "representationNotSupported"
+  /** Well-formed but this resolver does not speak that version (spec §9.2). */
+  | "unsupportedVersion"
+  /** No RPC endpoint is configured for the DID's chain id. */
+  | "unsupportedChain"
+  /**
+   * The registry is not in this resolver's allowlist. Distinct from notFound:
+   * the agent may well exist, we declined to look (spec §10.1).
+   */
+  | "registryNotAllowed"
+  /** The chain could not be read at all. */
+  | "networkError";
+
+export interface ParsedV2 {
+  version: 2;
+  did: string;
+  namespace: "eip155";
+  chainId: number;
+  registry: `0x${string}`;
+  agentId: bigint;
+  /** ERC-8004's own identifier: `{namespace}:{chainId}:{registry}`. */
+  agentRegistry: string;
+}
+
+export interface ParsedV1 {
+  version: 1;
+  did: string;
+  /** base58 Ed25519 owner pubkey */
+  ownerPubkey: string;
+  /** owner-scoped slug */
+  agentId: string;
+}
+
+export type ParsedDid = ParsedV1 | ParsedV2;
+
+export interface VerificationMethod {
+  id: string;
+  type: "EcdsaSecp256k1RecoveryMethod2020";
+  controller: string;
+  /** CAIP-10, with the address in EIP-55 checksummed form. */
+  blockchainAccountId: string;
+}
+
+export interface ServiceEntry {
+  id: string;
+  type: string;
+  serviceEndpoint: string;
+}
+
+export interface DidDocument {
+  "@context": string[];
+  id: string;
+  controller: string;
+  verificationMethod: VerificationMethod[];
+  authentication: string[];
+  capabilityInvocation: string[];
+  assertionMethod: string[];
+  service: ServiceEntry[];
+}
+
+export interface ResolutionWarning {
+  code: string;
+  message: string;
+}
+
+export interface DidResolutionMetadata {
+  contentType?: "application/did+ld+json";
+  error?: ResolutionErrorCode;
+  errorMessage?: string;
+  warnings?: ResolutionWarning[];
+}
+
+export interface DidDocumentMetadata {
+  /** Block number the state was read at. A number, not a timestamp — see spec §6.1. */
+  versionId?: string;
+  deactivated?: boolean;
+  /** How deactivation was determined; the two are not equivalent (spec §7). */
+  deactivationReason?: "burned" | "registrationInactive";
+  /**
+   * Present when the agent names a Registration File and it could not be
+   * read or parsed. `service` is then empty and `deactivated` unset because
+   * nothing was read, not because the file said so; a consumer that reads
+   * only `deactivated` would otherwise take "unknown" for "active" (spec §6.1).
+   */
+  registrationFile?: "unavailable";
+  agentRegistry?: string;
+  /** Set on a v1 DID resolved through an injected v1 resolver. */
+  deprecated?: boolean;
+  /**
+   * The scheme of the agentURI the services came from, as the chain gives it
+   * (`ipfs`, `https`, `data`, ...), so a consumer can apply its own policy: an
+   * `ipfs` CID commits to the content, an `https` document can change with no
+   * on-chain trace (spec §10.3). Present whenever the agentURI is non-empty
+   * and has a scheme, whether or not the file could be read.
+   */
+  agentUriScheme?: string;
+  /**
+   * The cross-registrations the Registration File claims (spec §8), as
+   * did:aip v2 DIDs. A claim is `verified` only when the counterpart's own
+   * Registration File lists this agent back; it is `unverified` when it does
+   * not, and when the round trip could not be made at all: no RPC for that
+   * chain, a registry outside the allowlist, a read or fetch that failed. Only
+   * the first `MAX_CROSS_REGISTRATION_CHECKS` are checked; the rest are
+   * reported unverified with a warning. Absent when the file claims none.
+   */
+  crossRegistrations?: CrossRegistrations;
+}
+
+export interface CrossRegistrations {
+  verified: string[];
+  unverified: string[];
+}
+
+export interface DidResolutionResult {
+  didDocument: DidDocument | null;
+  didResolutionMetadata: DidResolutionMetadata;
+  didDocumentMetadata: DidDocumentMetadata;
+}
+
+/**
+ * Resolves the legacy Solana form.
+ *
+ * v1 support is injected rather than built in. The point of this package is to
+ * read ERC-8004 with viem and nothing else; bundling a Solana client to serve
+ * identifiers we are migrating away from would defeat that. A caller that still
+ * needs v1 supplies one, and the spec's requirement is met either way: a v1 DID
+ * is recognised, never reported as malformed, and without a handler it returns
+ * `unsupportedVersion` so the caller can try another resolver.
+ */
+export type V1Resolver = (parsed: ParsedV1) => Promise<DidResolutionResult>;
+
+export interface ResolverOptions {
+  /** chainId → RPC endpoint. */
+  rpc: Record<number, string>;
+  /** Registry addresses this resolver will read. Omit to allow any. See spec §10.1. */
+  allowedRegistries?: string[];
+  v1Resolver?: V1Resolver;
+  /** Dereferences an agentURI. Defaults to https:// and ipfs:// via a gateway. */
+  fetchAgentUri?: (uri: string) => Promise<unknown>;
+  ipfsGateway?: string;
+  timeoutMs?: number;
+  /** Largest registration file the default fetcher will read. Default 1 MiB. */
+  maxAgentUriBytes?: number;
+  /**
+   * Hosts the default fetcher may contact for a registration file, on every
+   * redirect hop. Omit to allow any public host. The IPFS gateway is exempt.
+   */
+  allowedAgentUriHosts?: string[];
+  /**
+   * Where the detail of a chain read failure goes. The resolution result only
+   * ever says *what* failed ("ownerOf could not be read"), never *where*: viem
+   * puts the RPC endpoint, and with it any API key in its path, into the
+   * message of every transport error, and the result goes back to whoever
+   * asked (#267). The cause is handed here instead, for the operator's log.
+   * Omit to drop it.
+   */
+  onNetworkError?: (context: string, cause: unknown) => void;
+}

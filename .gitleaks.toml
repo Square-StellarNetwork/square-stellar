@@ -1,0 +1,79 @@
+# gitleaks yapilandirmasi.
+#
+# Varsayilan kural seti oldugu gibi kullaniliyor. Istisnalar DOSYA BAZINDA ve
+# tek tek yaziliyor; "test dosyalarini atla" bicimindeki genis bir kural
+# bilerek yok, cunku gercek bir sir de bir test dosyasinda durabilir.
+#
+# Not: tekil [allowlist] blogundaki `regexes` alani `useDefault = true` ile
+# birlestiginde uygulanmiyor. Cogul [[allowlists]] + `regexTarget` calisiyor —
+# square#45'te dogrulandi, negatif kontrolle: ayni dosyaya konan gercek bir sir
+# hala yakalaniyor. Deger bazinda yazilabiliyorsa oyle yaz, cunku yol bazinda
+# istisna o dosyaya sonradan girecek her seyi de gorunmez yapiyor.
+#
+# Yeni bir istisna eklerken gerekcesini de yaz.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """Redaksiyon testi, redakte edilmis ciktilari dogruladigi icin
+yer tutucu 'REDACTED' degerleri barindiriyor; generic-api-key kurali bunlarin
+entropisine takiliyor. Dosyada gercek bir kimlik bilgisi yok."""
+paths = ['''^services/prover/test/error-redaction\.test\.js$''']
+
+[[allowlists]]
+description = """Anvil'in herkese acik gelistirme mnemonic'inden turetilen anahtarlar.
+Bu iki dosya branch gecmisinde o anahtarlari literal olarak tasidi; simdi
+mnemonic'ten turetiliyor. Anahtarlar Foundry belgelerinde yayinlanmistir ve
+hicbir gercek ag uzerinde deger tutmaz (Arc USDC bu adresleri bloklamistir)."""
+paths = [
+  '''^contracts/script/DeployLocal\.s\.sol$''',
+  '''^packages/core/test/fork\.test\.ts$''',
+]
+
+[[allowlists]]
+description = """proofs.json'daki `zkey_sha256`: fixture'lari ureten zkey'in
+ozeti. square#121 onu oraya koydu, cunku commit'lenmis verifier ile
+fixture'larin ayni anahtardan geldigi baska turlu soylenemiyor. generic-api-key
+kuralina takiliyor: 64 karakterlik hex, ve anahtar adi `_sha256` ile bitiyor.
+
+Yol degil deger bazinda: dosyanin tamami muaf tutulsa oraya konacak gercek bir
+sir de gorunmez olurdu, ve bu dosya her devre degisikliginde yeniden uretiliyor.
+
+Degeri degistirerek cozulemez, ki ptau onbellek anahtarinda oyle cozulmustu:
+orada anahtarin bicimi tesadufiydi, burada degerin kendisi kayit."""
+regexTarget = "line"
+regexes = ['''"zkey_sha256":\s*"[0-9a-f]{64}"''']
+
+[[allowlists]]
+description = """Anvil'in yayinlanmis 0 numarali test hesabinin ozel anahtari.
+Yerel yigin (compose.yaml) keeper'i bu anahtarla imzalar; anahtar Foundry
+belgelerinde ve anvil'in her acilis ciktisinda yazilidir, 31337 disinda hicbir
+seyi kontrol etmez. Istisna YOL degil DEGER bazinda: .env.example'a baska bir
+anahtar girilirse gitleaks onu yine yakalar."""
+regexTarget = "line"
+regexes = ['''0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''']
+
+[[allowlists]]
+description = """Circle'in CCTP V2 sozlesme adresleri (TokenMessengerV2, TokenMinterV2)
+ve testnet USDC'leri, square#32: herkese acik, Circle'in belgelerinde yayimli ve
+zincirden okunarak dogrulanmis adresler. generic-api-key kurali, degerlerin
+20 baytlik hex olmasi ve alan adlarinin `token` icermesi (`tokenMessenger`,
+`tokenMinter`, `burnToken`) yuzunden takiliyor. Istisna YOL degil DEGER bazinda:
+ayni dosyalara girecek baska bir 0x degeri yine yakalanir."""
+regexTarget = "line"
+regexes = [
+  '''0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA''',
+  '''0xb43db544E2c27092c107639Ad201b3dEfAbcF192''',
+  '''0x1c7[dD]4[bB]196[cC][bB]0[cC]7[bB]01[dD]743[fF][bB][cC]6116[aA]902379[cC]7238''',
+]
+
+[[allowlists]]
+description = """Anvil's published test account 7 private key. The local stack's
+screener (compose.yaml) signs with it and DeployLocal registers the same account
+on the ScreeningRegistry it deploys; the key is in Foundry's documentation and in
+anvil's startup output, and it controls nothing outside chain 31337. The
+exception is by VALUE, not by path: any other key added to .env.example is still
+reported."""
+regexTarget = "line"
+regexes = ['''0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356''']

@@ -1,0 +1,158 @@
+name: cli
+
+# Typecheck, unit-test and smoke-test @squaresdk/cli.
+#
+# Hermetic on purpose: no step contacts an RPC. The live checks against Arc
+# Testnet are opt-in (LIVE=1) and the acceptance test needs a funded key, so
+# neither belongs in a run that has to pass on every pull request.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/did-resolver/**"
+      - "packages/policy/**"
+      - "docs/smoke/**"
+      - "docs/agent-card/schema.json"
+      - ".github/workflows/cli.yml"
+  # No path filter on pull_request, deliberately. A required status check that a
+  # filter skips never reports, and GitHub blocks the merge waiting for a run
+  # that will not happen. The push filter above still keeps main's runs narrow.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      # The CLI depends on the resolver and on @squaresdk/core by path, and
+      # core depends on the resolver, so both have to be built in that order
+      # before the CLI can typecheck against their declarations. #49 moved the
+      # chain id, the endpoint and the registry address into core, so the CLI
+      # reads them from there rather than keeping a second copy.
+      - name: Build @squaresdk/did-resolver
+        working-directory: packages/did-resolver
+        run: |
+          npm install
+          npm run build
+          npm test
+
+      - name: Build @squaresdk/core
+        working-directory: packages/core
+        run: |
+          npm install --install-links
+          npm run build
+
+      - name: Build @squaresdk/policy
+        working-directory: packages/policy
+        run: |
+          npm install --install-links
+          npm run build
+
+      - name: Install @squaresdk/cli
+        working-directory: packages/cli
+        # --install-links copies the path dependency instead of symlinking it;
+        # a symlink here resolves outside the package and breaks the build.
+        run: npm install --install-links
+
+      - name: Typecheck
+        working-directory: packages/cli
+        run: npm run typecheck
+
+      - name: Unit tests
+        working-directory: packages/cli
+        run: npm test
+
+      - name: Build
+        working-directory: packages/cli
+        run: npm run build
+
+      - name: Smoke test (hermetic — no RPC is contacted)
+        working-directory: packages/cli
+        env:
+          NO_COLOR: "1"
+        run: |
+          set -uo pipefail
+          # A fresh HOME, so nothing here can read or write a real keystore.
+          export SQUARE_HOME="$(mktemp -d)"
+
+          fail=0
+          check() {  # name expected-exit-code args...
+            local name="$1" expected="$2"; shift 2
+            # Actions runs steps under `bash -e`, and most of these commands are
+            # supposed to fail. Assigning through `|| code=$?` keeps the call in
+            # a condition context, so a non-zero exit is data here rather than
+            # the end of the step.
+            local code=0
+            node dist/index.js "$@" >/dev/null 2>&1 || code=$?
+            if [ "$code" = "$expected" ]; then echo "  ok   $name -> $code"
+            else echo "  FAIL $name -> $code (expected $expected)"; fail=1; fi
+          }
+
+          check help 0 --help
+          check version 0 --version
+          check whoami 0 whoami --json
+          # The exit codes are the CLI's contract with a shell script, so each
+          # kind of failure has to stay distinguishable without parsing English.
+          check invalidDid 65 resolve did:aip:invalid
+          check v1Did 1 resolve did:aip:7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU:scribe
+          check unknownChain 78 resolve did:aip:eip155:1:0x8004a818bfb912233c491871b3d84c89a494bd9e:1
+          check noWallet 65 register --dry-run
+
+          exit $fail
+
+  # Phase 1's end-to-end proof, against the agents permanently registered on Arc
+  # Testnet. Read-only: no key, no gas, so it can run on every pull request.
+  #
+  # A separate job on purpose. It is the one thing here that talks to a network,
+  # and a testnet hiccup should read as "smoke failed", not as a unit-test
+  # regression.
+  smoke:
+    name: end-to-end (Arc Testnet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Build @squaresdk/did-resolver
+        working-directory: packages/did-resolver
+        run: |
+          npm install
+          npm run build
+
+      - name: Build @squaresdk/core
+        working-directory: packages/core
+        run: |
+          npm install --install-links
+          npm run build
+
+      - name: Build @squaresdk/policy
+        working-directory: packages/policy
+        run: |
+          npm install --install-links
+          npm run build
+
+      - name: Build @squaresdk/cli
+        working-directory: packages/cli
+        run: |
+          npm install --install-links
+          npm run build
+
+      - name: Resolve the permanent smoke agents
+        working-directory: packages/cli
+        run: npm run test:smoke

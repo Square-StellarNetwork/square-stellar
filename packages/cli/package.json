@@ -1,0 +1,45 @@
+{
+  "name": "@squaresdk/cli",
+  "version": "0.1.0",
+  "description": "Command-line client for Square — did:aip v2 agent identity on Arc.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Square-StellarNetwork/square.git",
+    "directory": "packages/cli"
+  },
+  "type": "module",
+  "bin": {
+    "square": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:live": "LIVE=1 vitest run",
+    "test:smoke": "SMOKE=1 vitest run test/smoke.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.7.0",
+    "@squaresdk/core": "file:../core",
+    "@squaresdk/did-resolver": "file:../did-resolver",
+    "@squaresdk/policy": "file:../policy",
+    "commander": "^12.1.0",
+    "viem": "^2.21.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

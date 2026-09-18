@@ -1,0 +1,516 @@
+import { describe, it, expect } from "vitest";
+import type { Hex } from "viem";
+import { JobStatus, deploymentFor, type SquareClient } from "@squaresdk/core";
+import { disputes, jobs, keeperActions, keeperJobState, migrate, MIGRATIONS_DIR, pgliteDatabase, type Database } from "@squaresdk/data";
+import { createLogger, createMetrics, type Metrics } from "@squaresdk/observability";
+import { Keeper, KEEPER_LOG_FIELDS } from "../src/run.js";
+
+const CHAIN = 31337;
+const NOW = 1_760_000_000n;
+const deployment = deploymentFor(CHAIN);
+const provider: Hex = "0x2222222222222222222222222222222222222222";
+
+interface Recorded {
+  level: string;
+  event: string;
+  fields: Record<string, unknown>;
+}
+
+function recordingLogger(sink: Recorded[]) {
+  const at = (level: string) => (event: string, fields: Record<string, unknown> = {}) => {
+    sink.push({ level, event, fields });
+  };
+  return { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"), child: () => recordingLogger(sink) } as never;
+}
+
+interface FakeChain {
+  finalize: (jobId: bigint) => Promise<{ hash: Hex; receipt: { gasUsed: bigint }; events: never[] }>;
+  calls: bigint[];
+}
+
+function fakeClient(chain: FakeChain, budget: bigint): SquareClient {
+  return {
+    deployment,
+    publicClient: {
+      getGasPrice: async () => 22_172_800_000n,
+      readContract: async () => true,
+    },
+    getJobRecord: async () => ({ status: JobStatus.Submitted, budget, evaluatorFeeBP: 50, expiredAt: NOW + 86_400n }),
+    isDisputed: async () => false,
+    challengeEndsAt: async () => NOW - 600n,
+    finalize: async (jobId: bigint) => {
+      chain.calls.push(jobId);
+      return chain.finalize(jobId);
+    },
+    finalizeDecided: async (jobId: bigint) => {
+      chain.calls.push(jobId);
+      return chain.finalize(jobId);
+    },
+  } as unknown as SquareClient;
+}
+
+function job(overrides: Partial<jobs.JobRecord>): jobs.JobRecord {
+  return {
+    chainId: CHAIN,
+    jobId: 1n,
+    client: "0x1111111111111111111111111111111111111111",
+    provider,
+    evaluator: deployment.keeperEvaluator,
+    hook: deployment.squareHook,
+    description: "translate a document",
+    budget: 25_000_000n,
+    status: jobs.JOB_STATUS.submitted,
+    expiredAt: NOW + 86_400n,
+    createdAt: NOW - 3_600n,
+    fundedAt: NOW - 3_000n,
+    submittedAt: NOW - 1_200n,
+    challengeEnd: NOW - 600n,
+    platformFeeBp: 250,
+    evaluatorFeeBp: 50,
+    deliverable: null,
+    payee: null,
+    providerBps: null,
+    reason: null,
+    disputed: false,
+    agentId: null,
+    updatedBlock: 1_000n,
+    refundReason: null,
+    ...overrides,
+  };
+}
+
+async function openDatabase(): Promise<Database> {
+  const db = await pgliteDatabase();
+  await migrate(db, MIGRATIONS_DIR, "up");
+  return db;
+}
+
+interface Built {
+  keeper: Keeper;
+  metrics: Metrics;
+  logs: Recorded[];
+  chain: FakeChain;
+}
+
+function build(db: Database, chain: FakeChain, overrides: Partial<ConstructorParameters<typeof Keeper>[0]> = {}): Built {
+  const logs: Recorded[] = [];
+  const metrics = createMetrics({ service: "test-keeper", defaultMetrics: false });
+  const keeper = new Keeper({
+    db,
+    chainId: CHAIN,
+    client: fakeClient(chain, 25_000_000n),
+    logger: recordingLogger(logs),
+    metrics,
+    minimumMarginBps: 0,
+    defaultFinalizeGas: 450_000n,
+    defaultFinalizeDecidedGas: 500_000n,
+    recordExpiries: false,
+    ...overrides,
+  });
+  return { keeper, metrics, logs, chain };
+}
+
+describe("candidates", () => {
+  it("ignores jobs settled by a third-party evaluator", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      await jobs.upsert(db, job({ jobId: 2n, evaluator: "0x9999999999999999999999999999999999999999" }));
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => ({ hash: `0x${"ab".repeat(32)}` as Hex, receipt: { gasUsed: 465_486n }, events: [] }),
+      };
+      const { keeper } = build(db, chain);
+
+      const report = await keeper.tick(NOW);
+
+      expect(report.finalized).toEqual([1n]);
+      expect(chain.calls).toEqual([1n]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("warns on every empty tick when the mirror is private to the process", async () => {
+    const db = await openDatabase();
+    try {
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => ({ hash: `0x${"ab".repeat(32)}` as Hex, receipt: { gasUsed: 1n }, events: [] }),
+      };
+      const { keeper, logs } = build(db, chain, { ephemeralMirror: true });
+
+      await keeper.tick(NOW);
+      await keeper.tick(NOW + 15n);
+
+      const warnings = logs.filter((entry) => entry.event === "keeper.empty_mirror");
+      expect(warnings).toHaveLength(2);
+      expect(warnings[0]?.level).toBe("warn");
+      expect(String(warnings[0]?.fields.reason)).toContain("DATABASE_URL");
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("a send that keeps failing", () => {
+  it("backs off, gives up and writes a bounded number of journal rows", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => {
+          throw new Error("execution reverted: NotOurJob");
+        },
+      };
+      const { keeper, logs } = build(db, chain, {
+        retryPolicy: { baseDelaySeconds: 60n, maxDelaySeconds: 600n, giveUpAfter: 3, maxJournalRowsPerJob: 3 },
+      });
+
+      let now = NOW;
+      for (let tick = 0; tick < 40; tick += 1) {
+        await keeper.tick(now);
+        now += 15n;
+      }
+
+      expect(chain.calls).toHaveLength(3);
+      const rows = await keeperActions.recent(db, CHAIN, 100);
+      expect(rows).toHaveLength(2);
+      expect(rows.filter((row) => row.reason?.startsWith("gave up after 3 attempts"))).toHaveLength(1);
+      expect(logs.filter((entry) => entry.event === "keeper.gave_up")).toHaveLength(1);
+      const last = await keeper.tick(now);
+      expect(last.skipped).toEqual([{ jobId: 1n, reason: "gaveUp" }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("retries once the backoff window has passed and forgets the job after a success", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      let failing = true;
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => {
+          if (failing) throw new Error("execution reverted: gas estimation failed");
+          return { hash: `0x${"cd".repeat(32)}` as Hex, receipt: { gasUsed: 465_486n }, events: [] };
+        },
+      };
+      const { keeper, metrics } = build(db, chain, {
+        retryPolicy: { baseDelaySeconds: 60n, maxDelaySeconds: 600n, giveUpAfter: 10, maxJournalRowsPerJob: 3 },
+      });
+
+      await keeper.tick(NOW);
+      expect((await keeper.tick(NOW + 30n)).skipped).toEqual([{ jobId: 1n, reason: "backoff" }]);
+      expect(chain.calls).toHaveLength(1);
+
+      failing = false;
+      const report = await keeper.tick(NOW + 61n);
+
+      expect(report.finalized).toEqual([1n]);
+      expect(chain.calls).toHaveLength(2);
+      expect(metrics.snapshot().finalizeGasGap).toBe(-15_486);
+      expect(metrics.snapshot().lastKeeperTickAt).toBeGreaterThan(0);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("what a restart carries", () => {
+  const policy = { baseDelaySeconds: 60n, maxDelaySeconds: 600n, giveUpAfter: 3, maxJournalRowsPerJob: 3 };
+
+  it("keeps a job it gave up on instead of attacking it again from zero", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => {
+          throw new Error("execution reverted: NotOurJob");
+        },
+      };
+      const first = build(db, chain, { retryPolicy: policy });
+      let now = NOW;
+      for (let tick = 0; tick < 20; tick += 1) {
+        await first.keeper.tick(now);
+        now += 15n;
+      }
+      expect(chain.calls).toHaveLength(3);
+      const journaled = await keeperActions.recent(db, CHAIN, 100);
+
+      const restarted = build(db, chain, { retryPolicy: policy });
+      expect(await restarted.keeper.restoreGiveUps()).toEqual([1n]);
+      for (let tick = 0; tick < 20; tick += 1) {
+        const report = await restarted.keeper.tick(now);
+        expect(report.skipped).toEqual([{ jobId: 1n, reason: "gaveUp" }]);
+        now += 15n;
+      }
+
+      expect(chain.calls).toHaveLength(3);
+      expect(await keeperActions.recent(db, CHAIN, 100)).toHaveLength(journaled.length);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("tries the job again after an operator clears the give-up", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      let failing = true;
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => {
+          if (failing) throw new Error("execution reverted: NotOurJob");
+          return { hash: `0x${"ef".repeat(32)}` as Hex, receipt: { gasUsed: 465_486n }, events: [] };
+        },
+      };
+      const first = build(db, chain, { retryPolicy: policy });
+      let now = NOW;
+      for (let tick = 0; tick < 20; tick += 1) {
+        await first.keeper.tick(now);
+        now += 15n;
+      }
+      expect(await keeperJobState.listFinalizeGaveUp(db, CHAIN)).toEqual([1n]);
+
+      expect(await keeperJobState.clearFinalizeGiveUp(db, CHAIN, 1n)).toBe(1);
+      failing = false;
+      const restarted = build(db, chain, { retryPolicy: policy });
+      expect(await restarted.keeper.restoreGiveUps()).toEqual([]);
+      const report = await restarted.keeper.tick(now);
+
+      expect(report.finalized).toEqual([1n]);
+      expect(chain.calls).toHaveLength(4);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("still remembers the give-up after the ninety day journal sweep", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => {
+          throw new Error("execution reverted: NotOurJob");
+        },
+      };
+      const first = build(db, chain, { retryPolicy: policy });
+      let now = NOW;
+      for (let tick = 0; tick < 20; tick += 1) {
+        await first.keeper.tick(now);
+        now += 15n;
+      }
+      expect(chain.calls).toHaveLength(3);
+
+      await db.query("update keeper_actions set created_at = now() - interval '91 days'");
+      expect(await keeperActions.sweep(db)).toBeGreaterThan(0);
+      expect(await keeperActions.recent(db, CHAIN, 100)).toEqual([]);
+
+      const restarted = build(db, chain, { retryPolicy: policy });
+      expect(await restarted.keeper.restoreGiveUps()).toEqual([1n]);
+      const report = await restarted.keeper.tick(now);
+
+      expect(report.skipped).toEqual([{ jobId: 1n, reason: "gaveUp" }]);
+      expect(chain.calls).toHaveLength(3);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("a job that can never pay for its own finalize", () => {
+  it("is decided from the mirror and never asked of the chain, so the profitable job is not behind it", async () => {
+    const db = await openDatabase();
+    try {
+      for (let id = 1n; id <= 200n; id += 1n) {
+        await jobs.upsert(db, job({ jobId: id, budget: 1_000_000n, evaluatorFeeBp: 50, challengeEnd: NOW - 7_200n }));
+      }
+      await jobs.upsert(db, job({ jobId: 201n, budget: 25_000_000n, evaluatorFeeBp: 50, challengeEnd: NOW - 600n }));
+      const reads: string[] = [];
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => ({ hash: `0x${"ab".repeat(32)}` as Hex, receipt: { gasUsed: 465_486n }, events: [] }),
+      };
+      const client = fakeClient(chain, 25_000_000n);
+      const counting = {
+        ...client,
+        getJobRecord: async (jobId: bigint) => {
+          reads.push(`record:${jobId}`);
+          return client.getJobRecord(jobId);
+        },
+        isDisputed: async (jobId: bigint) => {
+          reads.push(`disputed:${jobId}`);
+          return client.isDisputed(jobId);
+        },
+        challengeEndsAt: async (jobId: bigint) => {
+          reads.push(`window:${jobId}`);
+          return client.challengeEndsAt(jobId);
+        },
+      } as unknown as SquareClient;
+      const { keeper, logs } = build(db, chain, { client: counting });
+
+      const first = await keeper.tick(NOW);
+
+      expect(first.finalized).toEqual([201n]);
+      expect(first.unprofitable).toBe(200);
+      expect(first.skipped).toHaveLength(200);
+      expect(first.pending).toBe(1);
+      expect(first.oldestPendingAgeSeconds).toBe(600);
+      expect(reads).toEqual(["record:201", "disputed:201", "window:201"]);
+      expect(logs.filter((entry) => entry.event === "keeper.skipped")).toHaveLength(200);
+
+      reads.length = 0;
+      const second = await keeper.tick(NOW + 15n);
+
+      expect(second.unprofitable).toBe(200);
+      expect(second.pending).toBe(1);
+      expect(second.oldestPendingAgeSeconds).toBe(615);
+      expect(reads).toEqual(["record:201", "disputed:201", "window:201"]);
+      expect(logs.filter((entry) => entry.event === "keeper.skipped")).toHaveLength(200);
+      expect((await keeperActions.recent(db, CHAIN, 500)).filter((row) => row.action === "skipped")).toHaveLength(200);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("a bond left behind by an expiry", () => {
+  function openDispute(jobId: bigint, closed: boolean): disputes.DisputeRecord {
+    return {
+      chainId: CHAIN,
+      jobId,
+      disputer: "0x1111111111111111111111111111111111111111",
+      bond: 5_000_000n,
+      disputedAt: NOW - 1_000n,
+      resolveBy: NOW + 86_400n,
+      setVersion: 1,
+      outcome: null,
+      providerBps: null,
+      closed,
+      updatedBlock: 1_000n,
+    };
+  }
+
+  it("is settled by the tick, journaled, and not sent again once the chain says it is settled", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n, status: jobs.JOB_STATUS.expired, challengeEnd: null, disputed: true }));
+      await jobs.upsert(db, job({ jobId: 2n, status: jobs.JOB_STATUS.expired, challengeEnd: null, disputed: true }));
+      await jobs.upsert(db, job({ jobId: 3n, status: jobs.JOB_STATUS.expired, challengeEnd: null, disputed: true }));
+      await disputes.upsert(db, openDispute(1n, false));
+      await disputes.upsert(db, openDispute(2n, false));
+      await disputes.upsert(db, openDispute(3n, true));
+      const settledOnChain = new Set<bigint>([2n]);
+      const sent: bigint[] = [];
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => ({ hash: `0x${"ab".repeat(32)}` as Hex, receipt: { gasUsed: 1n }, events: [] }),
+      };
+      const client = {
+        ...fakeClient(chain, 25_000_000n),
+        disputeOf: async (jobId: bigint) => ({ disputedAt: 100, bondSettled: settledOnChain.has(jobId) }),
+        settleBond: async (jobId: bigint) => {
+          sent.push(jobId);
+          settledOnChain.add(jobId);
+          return { hash: `0x${"cd".repeat(32)}` as Hex, receipt: { gasUsed: 61_000n }, events: [] };
+        },
+      } as unknown as SquareClient;
+      const { keeper, logs } = build(db, chain, { client });
+
+      const first = await keeper.tick(NOW);
+
+      expect(first.bondsSettled).toEqual([1n]);
+      expect(sent).toEqual([1n]);
+      const journaled = (await keeperActions.recent(db, CHAIN, 10)).filter((row) => row.action === "settleBond");
+      expect(journaled.map((row) => row.jobId)).toEqual([1n]);
+      expect(logs.filter((entry) => entry.event === "keeper.bond_settled")).toHaveLength(1);
+
+      const second = await keeper.tick(NOW + 15n);
+
+      expect(second.bondsSettled).toEqual([]);
+      expect(sent).toEqual([1n]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("backs off and gives up on a settlement the chain keeps refusing", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n, status: jobs.JOB_STATUS.expired, challengeEnd: null, disputed: true }));
+      await disputes.upsert(db, openDispute(1n, false));
+      const sent: bigint[] = [];
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => ({ hash: `0x${"ab".repeat(32)}` as Hex, receipt: { gasUsed: 1n }, events: [] }),
+      };
+      const client = {
+        ...fakeClient(chain, 25_000_000n),
+        disputeOf: async () => ({ disputedAt: 100, bondSettled: false }),
+        settleBond: async (jobId: bigint) => {
+          sent.push(jobId);
+          throw new Error("execution reverted: NothingToSettle");
+        },
+      } as unknown as SquareClient;
+      const { keeper } = build(db, chain, {
+        client,
+        retryPolicy: { baseDelaySeconds: 60n, maxDelaySeconds: 600n, giveUpAfter: 2, maxJournalRowsPerJob: 3 },
+      });
+
+      await keeper.tick(NOW);
+      expect((await keeper.tick(NOW + 30n)).skipped).toEqual([{ jobId: 1n, reason: "backoff" }]);
+      await keeper.tick(NOW + 61n);
+      expect((await keeper.tick(NOW + 5_000n)).skipped).toEqual([{ jobId: 1n, reason: "gaveUp" }]);
+
+      expect(sent).toEqual([1n, 1n]);
+      expect(await keeperJobState.listFinalizeGaveUp(db, CHAIN)).toEqual([1n]);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("the keeper's own diagnostic fields", () => {
+  it("logs attempts and retryInSeconds, which the default allowlist drops", async () => {
+    const db = await openDatabase();
+    try {
+      await jobs.upsert(db, job({ jobId: 1n }));
+      const chain: FakeChain = {
+        calls: [],
+        finalize: async () => {
+          throw new Error("nonce too low");
+        },
+      };
+      const lines: string[] = [];
+      const logger = createLogger({
+        service: "square-keeper",
+        version: "test",
+        allowlist: KEEPER_LOG_FIELDS,
+        sink: (line) => lines.push(line),
+      });
+      const { keeper } = build(db, chain, {
+        logger,
+        retryPolicy: { baseDelaySeconds: 60n, maxDelaySeconds: 600n, giveUpAfter: 2, maxJournalRowsPerJob: 3 },
+      });
+
+      await keeper.tick(NOW);
+      await keeper.tick(NOW + 600n);
+
+      const written = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      const failed = written.find((entry) => entry["event"] === "keeper.finalize_failed");
+      const gaveUp = written.find((entry) => entry["event"] === "keeper.gave_up");
+      expect(failed?.["attempts"]).toBe(1);
+      expect(failed?.["retryInSeconds"]).toBe(60);
+      expect(failed?.["dropped_fields"]).toBeUndefined();
+      expect(gaveUp?.["attempts"]).toBe(2);
+      expect(gaveUp?.["dropped_fields"]).toBeUndefined();
+    } finally {
+      await db.close();
+    }
+  });
+});

@@ -1,0 +1,271 @@
+// The policy commitment, and opening it one field at a time.
+//
+// square#45. The commitment the registry holds and the hook compares is public
+// signal 1 of the proof, and until now it was Poseidon over eight policy values
+// directly. That is a fine commitment and a useless one to open: an auditor
+// shown seven of the eight to prove the eighth would have been shown seven
+// values, and shown them as hashes it could brute-force anyway — max_daily is
+// published on chain as PolicyRegistry.dailyLimit, the time field has fewer than
+// 150,000 possible values, and an empty list has a well-known image. That second
+// half is square#98.
+//
+// So each field now sits behind its own salt, and its position goes into the
+// hash with it:
+//
+//   leaf[i] = Poseidon(3)(i, salt[i], value[i])
+//   root    = Poseidon(8)(leaf[0] … leaf[7])
+//
+// The root is still one Poseidon(8), so the registry, the verifier and the
+// public signal layout are untouched. What is new is that `open()` produces a
+// disclosure an auditor can check against the chain without learning the other
+// seven values.
+//
+// This module is the only place the construction exists on the JS side, and
+// circuits/payment.circom is the only place it exists in constraints. They have
+// to agree byte for byte, and circuits/test/payment.test.js is what holds them
+// to it.
+
+import crypto from 'node:crypto';
+import { buildPoseidon } from 'circomlibjs';
+
+// The committed fields, in the order the circuit hashes them. The order is part
+// of the commitment — index i is an input to leaf i — so this array is not a
+// convenience, it is the specification.
+export const POLICY_FIELDS = Object.freeze([
+  'max_daily',
+  'max_per_tx',
+  'operator_id',
+  'policy_id',
+  'allowed_categories',
+  'blocked_addresses',
+  'token_whitelist',
+  'time_window',
+]);
+
+export const FIELD_COUNT = POLICY_FIELDS.length;
+
+// BN254's scalar field. A salt is reduced into it, because a value that does not
+// fit is not a field element and the circuit would reject the witness.
+const R = BigInt(
+  '21888242871839275222246405745257275088548364400416034343698204186575808495617',
+);
+
+let poseidonPromise = null;
+async function getPoseidon() {
+  if (!poseidonPromise) poseidonPromise = buildPoseidon();
+  return poseidonPromise;
+}
+
+/**
+ * A canonical field element, or null.
+ *
+ * Two jobs, and square#179 is about both.
+ *
+ * It never throws, because `verifyDisclosure` is an untrusted-input boundary
+ * whose whole contract is `{ ok: false, reason }`. It kept that contract for a
+ * bad index and broke it four ways for a bad salt, value or sibling: `BigInt()`
+ * threw and an auditor's service turned a forged disclosure into a 500 instead
+ * of a "no".
+ *
+ * And it never echoes what it was given. `BigInt("abc")` throws
+ * `Cannot convert abc to a BigInt` -- the offending value, verbatim, into the
+ * log and the response. services/prover/src/normalize.js exists because of that
+ * exact leak; the disclosure path had it too.
+ *
+ * Out of field is rejected rather than reduced. The old code reduced the salt
+ * (`% R`) and left the value alone, so a disclosure carrying `v + R` verified
+ * and the caller was handed a non-canonical number as the operator's ceiling.
+ * Whether `v` and `v + R` hash alike is a property of the hash library's input
+ * handling, and this code should not have to know: one encoding per value, and
+ * anything else is refused.
+ */
+function parseFieldElement(value) {
+  if (typeof value === 'bigint') return value >= 0n && value < R ? value : null;
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    return BigInt(value);
+  }
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!/^(0|[1-9][0-9]*)$/.test(text)) return null;
+  const parsed = BigInt(text);
+  return parsed < R ? parsed : null;
+}
+
+/**
+ * @throws when the argument is not a canonical field element. The message names
+ *         the argument and never its value.
+ */
+function toField(value, label = 'value') {
+  const parsed = parseFieldElement(value);
+  if (parsed === null) {
+    throw new Error(`${label}: must be a non-negative integer below the BN254 scalar field`);
+  }
+  return parsed;
+}
+
+/**
+ * The eight leaf salts, derived from one secret the operator keeps with the
+ * policy.
+ *
+ * Deriving rather than storing eight is not a shortcut: a policy has to produce
+ * the same commitment every time it is proved, so the salts have to be stable,
+ * and one secret is one thing to store and to lose. The derivation is inside
+ * Poseidon so a disclosed leaf salt says nothing about the others — an auditor
+ * given salt[3] cannot compute salt[4], which matters because a disclosure hands
+ * one salt over by design.
+ */
+export async function deriveSalts(policySalt) {
+  const poseidon = await getPoseidon();
+  const secret = toField(policySalt) % R;
+  const salts = [];
+  for (let i = 0; i < FIELD_COUNT; i++) {
+    salts.push(BigInt(poseidon.F.toString(poseidon([secret, BigInt(i)]))));
+  }
+  return salts;
+}
+
+/** A fresh policy salt. 32 bytes, reduced into the scalar field. */
+export function randomPolicySalt() {
+  return (BigInt(`0x${crypto.randomBytes(32).toString('hex')}`) % R).toString();
+}
+
+/**
+ * leaf[i] = Poseidon(3)(i, salt, value)
+ *
+ * Both the salt and the value have to be canonical field elements. The salt
+ * used to be reduced with `% R` and the value not reduced at all; the comment
+ * on R said why reduction was needed and the value never got it.
+ */
+export async function leafHash(index, salt, value) {
+  const poseidon = await getPoseidon();
+  return BigInt(poseidon.F.toString(
+    poseidon([toField(index, 'index'), toField(salt, 'salt'), toField(value, 'value')]),
+  ));
+}
+
+/**
+ * The eight leaves and the root, from the eight committed values and their
+ * salts. The root is `policy_data_hash`.
+ */
+export async function buildCommitment(values, salts) {
+  if (values.length !== FIELD_COUNT) {
+    throw new Error(`expected ${FIELD_COUNT} policy values, got ${values.length}`);
+  }
+  if (salts.length !== FIELD_COUNT) {
+    throw new Error(`expected ${FIELD_COUNT} salts, got ${salts.length}`);
+  }
+  const poseidon = await getPoseidon();
+  const leaves = [];
+  for (let i = 0; i < FIELD_COUNT; i++) {
+    leaves.push(await leafHash(i, salts[i], values[i]));
+  }
+  const root = BigInt(poseidon.F.toString(poseidon(leaves)));
+  return { root: root.toString(), leaves: leaves.map(String) };
+}
+
+/**
+ * A disclosure of one field.
+ *
+ * What it contains is what a verifier needs and nothing else: which field, its
+ * value, its salt, and the seven sibling leaves as hashes. The siblings are what
+ * make it checkable and the salts are what keep them opaque.
+ */
+export async function open(values, salts, field) {
+  const index = typeof field === 'number' ? field : POLICY_FIELDS.indexOf(field);
+  if (index < 0 || index >= FIELD_COUNT) {
+    throw new Error(`unknown policy field: ${field}`);
+  }
+  const { root, leaves } = await buildCommitment(values, salts);
+  const siblings = leaves.map((leaf, i) => (i === index ? null : leaf));
+  return {
+    field: POLICY_FIELDS[index],
+    index,
+    value: String(values[index]),
+    salt: String(salts[index]),
+    siblings,
+    root,
+  };
+}
+
+/**
+ * Check a disclosure against a commitment the chain holds.
+ *
+ * `expectedRoot` is `PolicyRegistry.commitmentOf(poster)`, so a disclosure that
+ * verifies is a statement about the policy that institution registered — not
+ * about a policy the discloser made up for the occasion.
+ *
+ * **It never throws.** The caller is checking something handed to them by
+ * somebody whose claim they do not accept yet, so every malformed input is a
+ * `{ ok: false, reason }` and not an exception: an auditor's service written as
+ * `if (!(await verifyDisclosure(d, root)).ok)` must be able to say "no" rather
+ * than fail. square#179 found four paths that threw instead -- a salt, a value
+ * or a sibling that `BigInt()` could not parse -- and the exception carried the
+ * forged text in its message. square#264 found two more: a disclosure that is
+ * `null` or `undefined`, and a root with no string form.
+ *
+ * **And it reads one encoding per value.** A number at or above the field
+ * modulus is refused rather than reduced, and `value` comes back canonical, so
+ * the number the caller goes on to treat as the operator's ceiling is the number
+ * the commitment covers and not another spelling of it.
+ */
+export async function verifyDisclosure(disclosure, expectedRoot) {
+  // square#264. The destructuring below threw on null and undefined, the two
+  // values an auditor's service is likeliest to be handed: JSON.parse('null'),
+  // a body field that was never sent. An array is refused here too, because
+  // 'index out of range' is not why it fails.
+  if (disclosure === null || typeof disclosure !== 'object' || Array.isArray(disclosure)) {
+    return { ok: false, reason: 'disclosure is not an object' };
+  }
+  // The root is held to the same contract. String() threw for an object with no
+  // primitive form, and a root is a decimal string or a bigint, never anything
+  // else.
+  if (typeof expectedRoot !== 'string' && typeof expectedRoot !== 'bigint') {
+    return { ok: false, reason: 'expected root is not a string or a bigint' };
+  }
+  const { index, value, salt, siblings } = disclosure;
+  if (!Number.isInteger(index) || index < 0 || index >= FIELD_COUNT) {
+    return { ok: false, reason: 'index out of range' };
+  }
+  if (!Array.isArray(siblings) || siblings.length !== FIELD_COUNT) {
+    return { ok: false, reason: `expected ${FIELD_COUNT} sibling slots` };
+  }
+  if (siblings[index] !== null && siblings[index] !== undefined) {
+    return { ok: false, reason: 'the disclosed slot must be empty, not pre-filled' };
+  }
+  for (let i = 0; i < FIELD_COUNT; i++) {
+    if (i !== index && (siblings[i] === null || siblings[i] === undefined)) {
+      return { ok: false, reason: `sibling ${i} is missing` };
+    }
+  }
+
+  // Every remaining number, before any of it reaches Poseidon. Each one used to
+  // go straight into BigInt(), so a forged disclosure produced an exception
+  // rather than the `{ ok: false }` this function's own structure promises --
+  // and the exception carried the forged text in its message.
+  const saltField = parseFieldElement(salt);
+  if (saltField === null) return { ok: false, reason: 'salt is not a field element' };
+
+  const valueField = parseFieldElement(value);
+  if (valueField === null) return { ok: false, reason: 'value is not a field element' };
+
+  const leaves = new Array(FIELD_COUNT);
+  for (let i = 0; i < FIELD_COUNT; i++) {
+    if (i === index) continue;
+    const sibling = parseFieldElement(siblings[i]);
+    if (sibling === null) return { ok: false, reason: `sibling ${i} is not a field element` };
+    leaves[i] = sibling;
+  }
+
+  const poseidon = await getPoseidon();
+  leaves[index] = await leafHash(index, saltField, valueField);
+  const root = BigInt(poseidon.F.toString(poseidon(leaves))).toString();
+
+  if (root !== String(expectedRoot)) {
+    return { ok: false, reason: 'the disclosure does not open the expected commitment' };
+  }
+  // The parsed value, not the string that arrived. They differ exactly when the
+  // caller was about to be handed a non-canonical encoding of the operator's
+  // own number.
+  return { ok: true, field: POLICY_FIELDS[index], value: valueField.toString() };
+}
