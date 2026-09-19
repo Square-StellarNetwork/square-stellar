@@ -1,5 +1,9 @@
 # Gas, measured
 
+> This page describes the Arc deployment. Its Stellar counterpart, with Soroban
+> resource fees in XLM and their USDC equivalent, is
+> [resource-fees.md](resource-fees.md).
+
 Every number here is a measurement. The estimates the port started from
 (ERC-20 transfer ~0.0014 USDC, Groth16 verification ~0.006 USDC) are replaced
 by what the suite and the chain report.
