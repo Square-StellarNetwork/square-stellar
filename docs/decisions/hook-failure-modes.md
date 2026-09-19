@@ -135,3 +135,64 @@ settles the bond before the rejection is applied, and it was removed.
 - `Arbitration.t.sol`: `test_vote_splitNeedsAPayoutResolver`,
   `test_settleBond_returnsTheBondWhenTheJobExpiresUnderADeadResolver`.
 - `KeeperEvaluator.t.sol`: `test_finalizeDecided_refusesASplitItCannotRoute`.
+
+## On Soroban: what changes ([#3][s3])
+
+Everything above describes the EVM contracts in `contracts/src/`, and that
+record stands as it is. The Stellar port keeps the principle: a hook informs,
+it never vetoes, on the way out of escrow. The mechanism behind it changes,
+and so does one guarantee. The full decision, the call graph and the
+measurements are in [call-graph-on-soroban.md](call-graph-on-soroban.md).
+
+**"Tolerant" means `try_invoke_contract`.** On `complete` and `reject`, the
+kernel calls `before_action` and `after_action` through
+`env.try_invoke_contract`. The call fails if the hook panics, fails with its
+own error, tries to call back into a contract already on the stack, or
+returns a value of the wrong type. In each case the kernel emits `HookFailed`
+and finishes the transition. Nothing the hook wrote or emitted in the failed
+call survives, just as a reverted EVM frame kept nothing.
+
+The pre-settlement actions keep the strict call (`invoke_contract`).
+`resolve_payout` stays strict in `complete` and tried in `claim_refund`, for
+the reasons given above.
+
+**Budget exhaustion cannot be caught, and there is no gas cap to contain
+it.** Soroban has no per-call gas limit. The instruction and memory budget
+belongs to the transaction. The host treats `Error(Budget, ExceededLimit)`
+as non-recoverable: it escalates past every `try` on the stack, the kernel's
+and the caller's (measured in `contracts/probes/call_graph_probe`,
+`a_hook_that_exhausts_the_budget_fails_the_whole_call`).
+
+On EVM, `{gas: _hookGasLimit}` cut off a hook that looped, and settlement
+went on (`test_hook_outOfGasIsBoundedByTheLimit`,
+`test_gasLimit_aRunawayComplianceCheckCannotBlockSettlement`). On Soroban,
+exhausting the budget brings down the whole transaction. That applies to a
+hook, to the compliance module it calls, and to an 8004 registry it calls:
+
+- `complete` fails;
+- `reject` fails;
+- the refund probe in `claim_refund` fails.
+
+No `HookFailed` is emitted, and nothing moves. The escrow is held until the
+cause is removed. So the sentence "a hook that reverts or runs out of its
+gas cap produces `HookFailed`" becomes, on Soroban: **a hook that fails
+produces `HookFailed`; a hook that exhausts the budget fails the
+transaction.**
+
+**The defence is outside the contracts:**
+
+- the owner's hook whitelist, admitting only hooks whose instruction cost was
+  measured;
+- owner switches in `square_hook` that take the reputation and the
+  validation writes out of the settlement path;
+- the keeper's `simulateTransaction` before it sends, with a held job
+  journaled rather than retried blindly;
+- a documented, measured instruction cost of a `finalize` with a module
+  installed. It replaces `MIN_HOOK_GAS_LIMIT`, which has no Soroban
+  counterpart because there is no per-call cap for the preview and the check
+  to fall on either side of ([#225][i225]).
+
+Details and the test plan are in
+[call-graph-on-soroban.md](call-graph-on-soroban.md#5-tolerant-hook-calls-what-a-hook-informs-it-never-vetoes-means-on-soroban).
+
+[s3]: https://github.com/Square-StellarNetwork/square-stellar/issues/3
