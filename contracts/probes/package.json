@@ -1,0 +1,16 @@
+{
+  "name": "square-probes",
+  "private": true,
+  "description": "Scripts behind the A-cluster decision records: test vectors and testnet simulations of the probe contracts.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "vectors": "node scripts/vectors.mjs",
+    "testnet": "node scripts/testnet.mjs"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "16.3.0"
+  }
+}
