@@ -1,0 +1,33 @@
+{
+  "_about": "f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31] as a big-endian integer; signal = 0x00 || those 31 bytes. Written by contracts/probes/scripts/address-field.mjs; decided in docs/decisions/address-field-mapping.md.",
+  "vectors": [
+    {
+      "name": "usdc_issuer_testnet",
+      "address": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "scval_xdr": "000000120000000000000000423e7d05f2ecafbfec192b215a3f1be96aedb8d8e70254abe3413e0207de56b2",
+      "signal": "0038622f1b6bed4428f007d87a0699c11bd471da6079d3bd54389565e67ca04c",
+      "decimal": "99621076774898747910484819585932269326110668697499388742722264076555952204"
+    },
+    {
+      "name": "usdc_sac_testnet",
+      "address": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "scval_xdr": "00000012000000015045cd5ec0729a768fd5ad02505852df4f028dce830e5ac52209ba48483b2f01",
+      "signal": "00f3f621aaa28a2f21130f183b450020ee2016bb79edd9fdaf15bf5ecba4f002",
+      "decimal": "431042573990652458262666485432172293367833421064678042013279631100531240962"
+    },
+    {
+      "name": "usdc_issuer_pubnet",
+      "address": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "scval_xdr": "0000001200000000000000003b9911380efe988ba0a8900eb1cfe44f366f7dbe946bed077240f7f624df15c5",
+      "signal": "0057eb773202bd4b5e3528a821ff15a929aa379bf9b7e2943818c97ba7416e9a",
+      "decimal": "155340818527610130179409553091719666724584157262043730372211781568269741722"
+    },
+    {
+      "name": "usdc_sac_pubnet",
+      "address": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "scval_xdr": "0000001200000001adefce59aee52968f76061d494c2525b75659fa4296a65f499ef29e56477e496",
+      "signal": "006dab8a377286236a25f018858be3b5d64045f87af64269d10dac584f6cf5ef",
+      "decimal": "193770254998073618774059682445019190609004201015034543077041246351324411375"
+    }
+  ]
+}
