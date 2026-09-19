@@ -331,7 +331,7 @@ export const openapiSpec = {
           },
           token_whitelist: {
             type: 'array', maxItems: 10,
-            items: { type: 'string', description: 'The token contracts the policy allows: the USDC Stellar Asset Contract, CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA on testnet. Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
+            items: { type: 'string', description: 'The token contracts the policy allows: the USDC Stellar Asset Contract of the network (docs/decisions/stellar-target.md). Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
           },
           payment_amount: {
             type: 'string',
