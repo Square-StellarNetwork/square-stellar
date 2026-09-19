@@ -1,0 +1,18 @@
+[package]
+name = "auth_probe"
+description = "Measurement behind docs/decisions/auth-and-token-flow.md (#5): the authorization trees Soroban records for an approve-free fund, a nested dispute -> open -> transfer, and a contract acting as evaluator. Not deployed as part of Square."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

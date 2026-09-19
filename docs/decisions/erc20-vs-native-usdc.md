@@ -1,5 +1,14 @@
 # Escrow and payment paths use the USDC ERC-20 interface, not native value
 
+> **Superseded on Stellar** by [auth-and-token-flow.md](auth-and-token-flow.md)
+> ([#5](https://github.com/Square-StellarNetwork/square-stellar/issues/5)).
+> Fees are paid in XLM. The payment token is the USDC Stellar Asset Contract,
+> with no `approve` step and **7 decimals**
+> ([stellar-target.md](stellar-target.md)). What follows records the Arc
+> decision. Its two load-bearing reasons still hold on Stellar: a token
+> `transfer` does not call into the recipient, and amounts stay under the
+> circuit's 64-bit bound.
+
 **Status:** decided in [#14][i14]. Binds the storage and event design in [#6][i6],
 the settlement core in [#20][i20] and the compliance hook in [#27][i27].
 
