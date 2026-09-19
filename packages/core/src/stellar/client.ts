@@ -61,6 +61,46 @@ export type Trustline =
   | { status: "missing" }
   | { status: "open"; balance: bigint; limit: bigint; authorized: boolean };
 
+/**
+ * One position of a `getEvents` topic filter: a value to match, typed the
+ * way the contract emitted it, or `"*"` for any. Symbols are event names,
+ * addresses `G…`/`C…`, `u64`s job ids.
+ */
+export type TopicFilter =
+  | "*"
+  | { symbol: string }
+  | { address: string }
+  | { u64: bigint | number }
+  | { u32: number }
+  | { string: string };
+
+export interface EventQuery {
+  /** The contract whose events; the kernel when omitted. */
+  contract?: ContractRef | undefined;
+  /**
+   * Topic patterns, each one a list of positions from the first topic (the
+   * event's name) on; an event matches when any pattern matches. Omitted:
+   * every event of the contract.
+   */
+  topics?: readonly (readonly TopicFilter[])[] | undefined;
+  /** Where to read from: a ledger, or the `cursor` a previous page answered. One of the two. */
+  startLedger?: number | undefined;
+  cursor?: string | undefined;
+  /** At most this many events; the endpoint's own default (100) when omitted. */
+  limit?: number | undefined;
+}
+
+export interface EventPage {
+  events: SquareEvent[];
+  /** Pass as `cursor` to read what comes after this page. */
+  cursor: string;
+  latestLedger: number;
+  /** The ledger's clock, unix seconds: what the contracts measure windows and expiries against. */
+  latestLedgerCloseTime: bigint;
+  /** The endpoint keeps about seven days; a `startLedger` before this is refused. */
+  oldestLedger: number;
+}
+
 /** What `createJob` takes. */
 export interface CreateJobParams {
   /** The provider's address: the agent to be paid. */
@@ -343,6 +383,39 @@ export class SquareClient {
     return decodeSquareEvents(source, this.deployment);
   }
 
+  /**
+   * A page of a contract's events from the endpoint, decoded: how an agent
+   * finds the jobs created for it and an app lists jobs without an indexer.
+   * Read forward with the page's `cursor`; the page also carries the
+   * ledger's clock.
+   */
+  async getEvents(query: EventQuery = {}): Promise<EventPage> {
+    await this.assertNetwork();
+    const { id } = this.resolve(query.contract ?? "square_job");
+    if ((query.cursor === undefined) === (query.startLedger === undefined)) {
+      throw new Error("getEvents takes startLedger or cursor, one of the two");
+    }
+    const filters: Api.EventFilter[] = [
+      {
+        type: "contract",
+        contractIds: [id],
+        ...(query.topics ? { topics: query.topics.map((pattern) => pattern.map(topicScVal)) } : {}),
+      },
+    ];
+    const request: Api.GetEventsRequest =
+      query.cursor !== undefined
+        ? { filters, cursor: query.cursor, ...(query.limit !== undefined ? { limit: query.limit } : {}) }
+        : { filters, startLedger: query.startLedger as number, ...(query.limit !== undefined ? { limit: query.limit } : {}) };
+    const page = await this.server.getEvents(request);
+    return {
+      events: decodeSquareEvents(page, this.deployment),
+      cursor: page.cursor,
+      latestLedger: page.latestLedger,
+      latestLedgerCloseTime: BigInt(page.latestLedgerCloseTime),
+      oldestLedger: page.oldestLedger,
+    };
+  }
+
   // ---- the kernel ------------------------------------------------------------
 
   private kernelCall<T>(method: string, args: Record<string, unknown>, parse?: (value: xdr.ScVal) => T): ContractCall<T> {
@@ -568,6 +641,16 @@ export class SquareClient {
       parse: () => undefined,
     });
   }
+}
+
+/** A topic filter position as the endpoint takes it: base64 XDR, or `*`. */
+function topicScVal(filter: TopicFilter): string {
+  if (filter === "*") return "*";
+  if ("symbol" in filter) return nativeToScVal(filter.symbol, { type: "symbol" }).toXDR("base64");
+  if ("address" in filter) return nativeToScVal(filter.address, { type: "address" }).toXDR("base64");
+  if ("u64" in filter) return nativeToScVal(BigInt(filter.u64), { type: "u64" }).toXDR("base64");
+  if ("u32" in filter) return nativeToScVal(filter.u32, { type: "u32" }).toXDR("base64");
+  return nativeToScVal(filter.string, { type: "string" }).toXDR("base64");
 }
 
 export function createSquareClient(config: SquareClientConfig): SquareClient {

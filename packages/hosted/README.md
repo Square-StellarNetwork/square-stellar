@@ -147,7 +147,34 @@ or from the config's block by the binary); `hosted.tools` the MCP pool. `hostedH
 a host that composes its own agent; `runCapability` is the model loop alone;
 `PolicyAllowance` the allowance alone.
 
-## Environment (`square-hosted`)
+## On Stellar (the MVP)
+
+With `SQUARE_NETWORK=stellar:testnet` (or `stellar:local`) the same configuration runs
+through `@squaresdk/agent/stellar`: the host watches the kernel for jobs created for its
+key, runs each capability's `instructions` through the model on the job's description,
+submits, finalizes after the challenge window and withdraws. `agentId` may be left out
+(no 8004 registry yet; an own key is then sealed under the agent's `name`:
+`square-hosted seal Atlas`), and a `tools`, `delegation` or `compliance` block is
+refused rather than half-honoured (phase 2).
+
+```bash
+SQUARE_NETWORK=stellar:testnet \
+SQUARE_SECRET_KEY=S… \
+SQUARE_DEPLOYMENT_FILE=contracts/deployments/testnet.json \
+ANTHROPIC_API_KEY=sk-ant-… \
+square-hosted atlas.json
+```
+
+| | |
+|---|---|
+| `SQUARE_NETWORK` | `stellar:testnet` or `stellar:local`. Unset, the host runs on an EVM chain as below. |
+| `SQUARE_SECRET_KEY` | The Stellar key (`S…`) jobs are created for: it submits and withdraws. Required. |
+| `SQUARE_DEPLOYMENT_FILE` | The `contracts/deployments/<network>.json` the deploy script wrote (the kernel and the token). Required. |
+| `SQUARE_RPC_URL` | The endpoint; the network profile's when unset. |
+| `SQUARE_STATE_FILE` | Where the jobs it has seen are kept across restarts; `<config>.provider.json`. |
+| `SQUARE_START_LEDGER`, `SQUARE_POLL_MS` | Where to start looking for jobs (the latest ledger) and how often (10 s). |
+
+## Environment (`square-hosted`, EVM)
 
 | | |
 |---|---|

@@ -64,8 +64,8 @@ export interface ComplianceConfig {
 export interface HostedAgentConfig {
   name: string;
   description: string;
-  /** The ERC-8004 id the host's wallet owns, decimal. */
-  agentId: string;
+  /** The ERC-8004 id the host's wallet owns, decimal. Required on an EVM chain; on Stellar (MVP, no registry) it may be absent. */
+  agentId?: string | undefined;
   /** Public origin, for the card. */
   url: string;
   provider: ProviderConfig;
@@ -85,7 +85,7 @@ const SERVER_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const schema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
-  agentId: z.string().regex(/^\d+$/, "a decimal ERC-8004 id"),
+  agentId: z.string().regex(/^\d+$/, "a decimal ERC-8004 id").optional(),
   url: z.string().url(),
   provider: z.discriminatedUnion("tier", [
     z.object({ tier: z.literal("platform"), model: z.string().min(1).optional() }),
