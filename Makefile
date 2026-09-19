@@ -12,7 +12,7 @@
 COMPOSE ?= docker compose
 SERVICES := prover indexer screener keeper app
 
-.PHONY: up down stop logs ps health clean rebuild
+.PHONY: up down stop logs ps health clean rebuild build-contracts test-contracts
 
 # The long-running services are named explicitly so that --wait has only
 # health checks to wait on: the deployer, the migration and the circuit build
@@ -56,3 +56,18 @@ health:
 # exists and would satisfy make.
 contracts/lib/forge-std/src/Script.sol:
 	git submodule update --init --recursive
+
+# The Soroban contracts (#7). Needs the Rust toolchain contracts/rust-toolchain.toml
+# names and stellar-cli at the version CI installs, which is the default of
+# .github/actions/stellar-cli (docs/decisions/stellar-target.md). The version is
+# read from that file rather than repeated here.
+STELLAR_CLI_VERSION := $(shell sed -n '/^  version:/,/default:/s/^    default: //p' .github/actions/stellar-cli/action.yml)
+
+build-contracts:
+	@stellar --version | head -1 | grep -q "^stellar $(STELLAR_CLI_VERSION) " || { echo "stellar-cli $(STELLAR_CLI_VERSION) is pinned (.github/actions/stellar-cli); found: $$(stellar --version 2>&1 | head -1)"; exit 1; }
+	cd contracts && stellar contract build
+	@cd contracts && for f in target/wasm32v1-none/release/*.wasm; do printf '%-28s %7s bytes\n' "$$(basename $$f)" "$$(wc -c < $$f | tr -d ' ')"; done
+	cd contracts && node tools/check-no-upgrade.mjs
+
+test-contracts:
+	cd contracts && cargo test --locked

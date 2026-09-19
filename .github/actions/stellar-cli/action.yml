@@ -1,0 +1,43 @@
+name: stellar-cli
+description: Install a pinned stellar-cli on a Linux runner, checksum-verified.
+
+# stellar-cli builds the Soroban contracts and generates their TypeScript
+# bindings, so its version decides the Wasm bytes and the generated clients.
+# The version is the one docs/decisions/stellar-target.md pins, and the
+# download is checked against a sha256 recorded here, the same rule the circom
+# action follows.
+#
+# The digest below was taken from the released asset, whose build provenance
+# verifies against stellar/stellar-cli's binaries.yml at the v27.1.0 tag:
+#   gh release download v27.1.0 -R stellar/stellar-cli -p 'stellar-cli-27.1.0-x86_64-unknown-linux-gnu.tar.gz'
+#   gh attestation verify stellar-cli-27.1.0-x86_64-unknown-linux-gnu.tar.gz -R stellar/stellar-cli
+#   shasum -a 256 stellar-cli-27.1.0-x86_64-unknown-linux-gnu.tar.gz
+#   9915fe63753d7154c26bb9e6410cf1d1ff9727a9b378e663c2790ab7a266af94
+
+inputs:
+  version:
+    description: stellar-cli release version, without the leading v.
+    required: false
+    default: 27.1.0
+  sha256:
+    description: sha256 of that release's x86_64-unknown-linux-gnu tarball.
+    required: false
+    default: 9915fe63753d7154c26bb9e6410cf1d1ff9727a9b378e663c2790ab7a266af94
+
+runs:
+  using: composite
+  steps:
+    - name: Install stellar-cli
+      shell: bash
+      env:
+        STELLAR_CLI_VERSION: ${{ inputs.version }}
+        STELLAR_CLI_SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        name="stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+        url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/${name}"
+        curl -fsSL --retry 3 --retry-delay 2 -o "/tmp/${name}" "$url"
+        echo "${STELLAR_CLI_SHA256}  /tmp/${name}" | sha256sum -c -
+        tar -xzf "/tmp/${name}" -C /tmp stellar
+        sudo mv /tmp/stellar /usr/local/bin/stellar
+        stellar --version

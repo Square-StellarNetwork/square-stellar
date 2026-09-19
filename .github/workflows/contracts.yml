@@ -111,6 +111,63 @@ jobs:
             if (existing) await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body: payload});
             else await github.rest.issues.createComment({owner, repo, issue_number, body: payload});
 
+  # The Soroban workspace (#7): what replaces this workflow's Foundry jobs as the
+  # B-cluster contracts land. The toolchain comes from contracts/rust-toolchain.toml
+  # and stellar-cli from the checksum-pinned action, both as
+  # docs/decisions/stellar-target.md fixes them.
+  soroban:
+    name: soroban workspace (build, test, bindings, no upgrade)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Rust toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          toolchain=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal --target wasm32v1-none --component rustfmt,clippy
+          rustc --version
+
+      - uses: ./.github/actions/stellar-cli
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: Build every contract, and their sizes
+        run: |
+          set -euo pipefail
+          stellar contract build
+          {
+            echo '### Soroban Wasm sizes'
+            echo
+            echo '| Wasm | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in target/wasm32v1-none/release/*.wasm; do
+              echo "| $(basename "$f") | $(wc -c < "$f") | \`$(sha256sum "$f" | cut -c1-16)…\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No contract can replace its own code
+        run: node tools/check-no-upgrade.mjs
+
+      - name: Probe vectors match their generators
+        working-directory: contracts/probes
+        run: |
+          npm ci --no-audit --no-fund
+          node scripts/vectors.mjs --check
+          node scripts/address-field.mjs --check
+
+      - name: Committed bindings match the contracts
+        working-directory: packages/core
+        run: node scripts/generate-bindings.mjs --check
+
   sdk:
     name: "@squaresdk/core against anvil"
     runs-on: ubuntu-latest

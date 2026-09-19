@@ -1,5 +1,41 @@
 # Contracts
 
+## Soroban workspace (Stellar)
+
+The Stellar contracts are a Cargo workspace in this directory
+([#7](https://github.com/Square-StellarNetwork/square-stellar/issues/7)). They
+are written contract by contract in the B-cluster issues, and until each one
+lands its crate is a skeleton that compiles to a Wasm with no functions. The
+Foundry project below stays until its Rust replacement lands
+([docs/upstream/foundry-to-soroban.md](../docs/upstream/foundry-to-soroban.md)).
+
+| Path | What |
+|---|---|
+| `contracts/<name>/` | one crate per deployed contract: `square_job`, `groth16_verifier`, `policy_registry`, `compliance_module`, `square_hook`, `keeper_evaluator`, `arbitration`, `claim_market`, `screening_registry` |
+| `common/` | shared types, errors, events, storage/TTL helpers ([#8](https://github.com/Square-StellarNetwork/square-stellar/issues/8)) |
+| `test-support/` | test-only contracts for the test suites ([#18](https://github.com/Square-StellarNetwork/square-stellar/issues/18)) |
+| `probes/` | the measurements behind the A-cluster decision records, with their Node scripts; not part of the deployment |
+| `tools/check-no-upgrade.mjs` | fails any contract Wasm that can replace its own code |
+
+Toolchain and versions are pinned by
+[docs/decisions/stellar-target.md](../docs/decisions/stellar-target.md):
+Rust `1.98.1` with `wasm32v1-none` (`rust-toolchain.toml`), `soroban-sdk =27.0.6`
+(`Cargo.toml`, `Cargo.lock` committed), `stellar-cli 27.1.0`
+(`.github/actions/stellar-cli`). The release profile is the one Soroban's
+examples use: `opt-level = "z"`, `overflow-checks = true`, `panic = "abort"`,
+`codegen-units = 1`, `lto = true`; `stellar-cli 27.1.0` refuses to build a
+release profile without `overflow-checks = true`.
+
+```sh
+make build-contracts      # stellar contract build, sizes, no-upgrade check
+make test-contracts       # cargo test --locked
+cd packages/core && npm run generate:bindings   # TypeScript clients into src/bindings/
+```
+
+Compiled Wasm is not committed; a deployment record carries each Wasm's sha256.
+
+## Foundry (Arc, being replaced)
+
 The settlement layer: an ERC-8183 job escrow on Arc, settled in the USDC ERC-20
 interface, with an optimistic evaluator, bonded arbitration, a receivable market
 and one whitelisted hook that routes payouts, runs the compliance check and
