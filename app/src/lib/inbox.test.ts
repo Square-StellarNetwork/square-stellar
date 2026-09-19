@@ -73,6 +73,13 @@ describe("classify", () => {
     expect(classify(job({ client: other }), me, keeper, now)).toBeNull();
     expect(classify(job({ status: JobStatus.Completed }), me, keeper, now)).toBeNull();
   });
+
+  it("asks the evaluator on the record to decide a submission the keeper does not hold", () => {
+    expect(classify(job({ status: JobStatus.Submitted, client: other, provider: thirdParty, evaluator: me }), me, keeper, now)).toBe("evaluate");
+    // The keeper's jobs settle by the window, not by a decision; a funded job is not yet the evaluator's to judge.
+    expect(classify(job({ status: JobStatus.Submitted, client: other, provider: thirdParty, evaluator: keeper }), keeper, keeper, now)).toBeNull();
+    expect(classify(job({ status: JobStatus.Funded, client: other, provider: thirdParty, evaluator: me }), me, keeper, now)).toBeNull();
+  });
 });
 
 describe("walletInbox", () => {
@@ -82,14 +89,16 @@ describe("walletInbox", () => {
       job({ id: 2n, status: JobStatus.Funded, client: other, provider: me }),
       job({ id: 3n, client: other }),
       job({ id: 4n, budget: 0n }),
+      job({ id: 5n, status: JobStatus.Submitted, client: other, provider: thirdParty, evaluator: me }),
     ];
     const groups = walletInbox(jobs, me, keeper, 2_000);
     expect(groups.map((group) => [group.kind, group.jobs.map((entry) => entry.id)])).toEqual([
       ["submit", [2n]],
+      ["evaluate", [5n]],
       ["budget", [4n]],
       ["finalize", [1n]],
     ]);
-    expect(walletJobCount(jobs, me)).toBe(3);
+    expect(walletJobCount(jobs, me)).toBe(4);
     expect(walletInbox(jobs, undefined, keeper, 2_000)).toEqual([]);
   });
 });

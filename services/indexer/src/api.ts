@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { getAddress, isAddress } from "viem";
-import { claimListings, disputes, jobs, type Database, type ListPage } from "@squaresdk/data";
+import { claimListings, disputes, jobEvents, jobs, type Database, type ListPage } from "@squaresdk/data";
 import type { Health, Metrics } from "@squaresdk/observability";
 import { observabilityRoutes } from "@squaresdk/observability/hono";
 import type { Indexer } from "./sync.js";
@@ -115,6 +115,21 @@ export function createApi(options: ApiOptions): Hono {
     if (!job) return c.json({ error: "not found" }, 404);
     const [listing, dispute] = await Promise.all([claimListings.get(db, chainId, job.jobId), disputes.get(db, chainId, job.jobId)]);
     return c.json(serialize({ job, listing, dispute }));
+  });
+  // The settlement record: every event the journal holds for one job, oldest
+  // first. The verdicts the hook and the compliance module reached on a
+  // release live only here; the kernel's record keeps where the money went,
+  // not why. A job the mirror does not know is 404 whether or not the journal
+  // holds stray events for its id, so a reader is never handed events for a
+  // job it cannot also read.
+  app.get("/jobs/:id/events", async (c) => {
+    const raw = c.req.param("id");
+    if (!WHOLE_NUMBER.test(raw)) return c.json({ error: "not a job id" }, 400);
+    const jobId = BigInt(raw);
+    const job = await jobs.get(db, chainId, jobId);
+    if (!job) return c.json({ error: "not found" }, 404);
+    const events = await jobEvents.listByJob(db, chainId, jobId);
+    return c.json(serialize({ jobId, items: events }));
   });
   app.get("/listings", (c) => pageOf(c, (page) => claimListings.listListed(db, chainId, page)));
   app.get("/disputes/open", (c) => pageOf(c, (page) => disputes.listOpen(db, chainId, page)));

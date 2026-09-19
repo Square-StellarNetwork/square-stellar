@@ -1,7 +1,8 @@
 "use client";
 
 import { agentFromDid, hashDeliverable, JobStatus, Outcome, specHashFromDescription, type SquareClient, type TransactionResult } from "@squaresdk/core";
-import { InvalidDidError } from "@squaresdk/did-resolver";
+import { formatDid, InvalidDidError } from "@squaresdk/did-resolver";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState, type ReactNode } from "react";
 import { isAddressEqual, zeroHash, type Address } from "viem";
@@ -13,6 +14,8 @@ import { SettlementClock } from "@/components/charts/SettlementClock";
 import { Chip } from "@/components/Chip";
 import { CompliancePanel } from "@/components/CompliancePanel";
 import { EmptyState } from "@/components/EmptyState";
+import { PartiesPanel } from "@/components/PartiesPanel";
+import { SettlementRecord } from "@/components/SettlementRecord";
 import { Field, inputClass } from "@/components/Field";
 import { GhostButton } from "@/components/GhostButton";
 import { JsonEditor } from "@/components/JsonEditor";
@@ -273,6 +276,74 @@ function VoteAction({ ctx, detail }: { ctx: ActionContext; detail: JobDetail }) 
           Reject, the client is refunded in full
         </label>
       </fieldset>
+    </ActionCard>
+  );
+}
+
+/**
+ * The evaluator on the record settles the job itself when it is not the
+ * keeper: complete pays the provider (a share of the net when the hook
+ * resolves the payout), reject refunds the client. The reason is a bytes32
+ * the kernel emits with the event; a note typed here is hashed the way a
+ * deliverable is, so the words stay off chain and the hash stands for them.
+ */
+function EvaluateAction({ ctx, detail, payoutRouted }: { ctx: ActionContext; detail: JobDetail; payoutRouted: boolean }) {
+  const submitted = detail.record.status === JobStatus.Submitted;
+  const [outcome, setOutcome] = useState<"complete" | "reject">(submitted ? "complete" : "reject");
+  const [bps, setBps] = useState("10000");
+  const [note, setNote] = useState("");
+  const parsedBps = /^\d+$/.test(bps) ? Number(bps) : Number.NaN;
+  const bpsValid = Number.isInteger(parsedBps) && parsedBps >= 0 && parsedBps <= 10_000;
+  const reason = useMemo(() => (note.trim().length > 0 ? hashDeliverable(note.trim()) : zeroHash), [note]);
+  const completing = submitted && outcome === "complete";
+  return (
+    <ActionCard
+      title="Evaluate"
+      description={
+        submitted
+          ? "You are the evaluator on this job's record, so the settlement is yours: complete pays the provider from escrow and reject refunds the client. Either one is final."
+          : "You are the evaluator on this job's record. Nothing has been submitted yet; rejecting now refunds the budget to the client."
+      }
+      buttonLabel={completing ? "Complete and pay" : "Reject and refund"}
+      disabled={completing && !bpsValid}
+      onClick={() => {
+        if (completing) {
+          if (!bpsValid) return;
+          const optParams = payoutRouted && parsedBps !== 10_000 ? ctx.square.completeOptParams({ providerBps: parsedBps }) : "0x";
+          void ctx.run("Complete", () => ctx.square.complete(ctx.id, reason, optParams));
+        } else {
+          void ctx.run("Reject", () => ctx.square.reject(ctx.id, reason));
+        }
+      }}
+      ctx={ctx}
+    >
+      {submitted ? (
+        <fieldset className="flex flex-col gap-3">
+          <legend className="text-caption font-medium text-carbon">Decision</legend>
+          <label className="flex items-center gap-3 text-body">
+            <input type="radio" name="evaluation" className="accent-lavender" checked={outcome === "complete"} onChange={() => setOutcome("complete")} />
+            Complete: pay the provider
+          </label>
+          <label className="flex items-center gap-3 text-body">
+            <input type="radio" name="evaluation" className="accent-lavender" checked={outcome === "reject"} onChange={() => setOutcome("reject")} />
+            Reject: refund the client
+          </label>
+        </fieldset>
+      ) : null}
+      {completing && payoutRouted ? (
+        <Field
+          label="Provider share (basis points)"
+          htmlFor="evaluate-bps"
+          hint="10000 pays the whole net payout to the payee; less returns the rest to the client. The hook routes the split."
+          error={bpsValid ? null : "A whole number from 0 to 10000."}
+        >
+          <input id="evaluate-bps" inputMode="numeric" className={inputClass} value={bps} onChange={(event) => setBps(event.target.value)} />
+        </Field>
+      ) : null}
+      {completing && !payoutRouted ? <p className="text-caption text-graphite">This job's hook does not resolve the payout, so completing pays the whole net payout to the provider.</p> : null}
+      <Field label="Reason (optional)" htmlFor="evaluate-reason" hint={note.trim().length > 0 ? <span className="break-all tabular-nums">Written on chain as {reason}</span> : "A note for the record; only its keccak256 hash goes on chain, as the event's reason."}>
+        <textarea id="evaluate-reason" rows={2} className={inputClass} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Why the work is accepted or refused" />
+      </Field>
     </ActionCard>
   );
 }
@@ -547,6 +618,7 @@ export function JobView() {
   const specHash = specHashFromDescription(record.description);
   const isClient = sameAddress(address, record.client);
   const isProvider = sameAddress(address, record.provider);
+  const isEvaluator = sameAddress(address, record.evaluator);
   const keeperEvaluates = evaluatedByKeeper(record, deployment.keeperEvaluator);
   const hookIsSquare = isAddressEqual(record.hook, deployment.squareHook);
   const windowClosed = challengeWindowClosed(detail.challengeEnd, now);
@@ -579,6 +651,7 @@ export function JobView() {
   const showBuy = listing.status === 1 && payoutRouted && address !== undefined && !sameAddress(address, listing.seller) && !isProvider && !isClient;
   const showCancel = listing.status === 1 && sameAddress(address, listing.seller);
   const showReject = record.status === JobStatus.Open && isClient;
+  const showEvaluate = isEvaluator && !keeperEvaluates && (record.status === JobStatus.Submitted || record.status === JobStatus.Funded);
   const expired = now >= record.expiredAt;
   const showClaimRefund = refundAvailable(record, deployment.keeperEvaluator, now);
   const expiryHeldByKeeper = expired && record.status === JobStatus.Submitted && keeperEvaluates;
@@ -600,6 +673,7 @@ export function JobView() {
     showBuy ||
     showCancel ||
     showReject ||
+    showEvaluate ||
     showClaimRefund ||
     withdrawable > 0n ||
     bondWithdrawable > 0n ||
@@ -702,7 +776,18 @@ export function JobView() {
                 </span>
               ) : null}
             </Row>
-            <Row label="Agent">{detail.agentId !== null ? <span className="tabular-nums">ERC-8004 agent #{detail.agentId.toString()}</span> : <span className="text-ash">Not bound</span>}</Row>
+            <Row label="Agent">
+              {detail.agentId !== null ? (
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="tabular-nums">ERC-8004 agent #{detail.agentId.toString()}</span>
+                  <Link href={`/agents?did=${encodeURIComponent(formatDid(activeChain.id, deployment.identityRegistry, detail.agentId))}`} className="text-caption text-carbon underline decoration-fog underline-offset-4 hover:decoration-carbon">
+                    Resolve its DID
+                  </Link>
+                </span>
+              ) : (
+                <span className="text-ash">Not bound</span>
+              )}
+            </Row>
             <Row label="Created">{formatTimestamp(record.createdAt)}</Row>
             <Row label="Expires">
               {formatTimestamp(record.expiredAt)}
@@ -743,6 +828,10 @@ export function JobView() {
       {specHash ? <SpecCheck description={record.description} /> : null}
 
       {hookIsSquare ? <CompliancePanel jobId={id} status={record.status} client={record.client} address={address} now={now} /> : null}
+
+      {hookIsSquare ? <PartiesPanel client={record.client} provider={record.provider} payee={detail.payee} submitted={record.submittedAt > 0} /> : null}
+
+      {hookIsSquare ? <SettlementRecord jobId={id} status={record.status} /> : null}
 
       {listing.status !== 0 || detail.dispute.disputedAt !== 0 ? (
         <div className={`grid gap-4 ${listing.status !== 0 && detail.dispute.disputedAt !== 0 ? "lg:grid-cols-2" : ""}`}>
@@ -909,6 +998,7 @@ export function JobView() {
                 send={(client) => client.reject(id)}
               />
             ) : null}
+            {showEvaluate ? <EvaluateAction ctx={ctx} detail={detail} payoutRouted={payoutRouted} /> : null}
             {showClaimRefund ? (
               <SimpleAction
                 ctx={ctx}

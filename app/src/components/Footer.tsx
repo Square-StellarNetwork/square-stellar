@@ -30,6 +30,9 @@ export function Footer() {
           <Link href="/new" className={item}>
             New job
           </Link>
+          <Link href="/agents" className={item}>
+            Agents
+          </Link>
           <Link href="/policy" className={item}>
             Policy
           </Link>

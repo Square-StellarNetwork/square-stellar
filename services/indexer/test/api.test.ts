@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   claimListings,
   disputes,
+  jobEvents,
   jobs,
   migrate,
   MIGRATIONS_DIR,
@@ -318,6 +319,91 @@ describe("a list endpoint never answers with the whole table", () => {
       expect(Object.keys(body).sort()).toEqual(
         ["chainHead", "chainId", "counts", "jobs", "lastIndexedBlock", "missingWindowEvents", "quarantined", "windows"],
       );
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+});
+
+describe("the settlement record of one job", () => {
+  const TX = `0x${"ab".repeat(32)}` as const;
+
+  it("answers every journaled event of the job, oldest first, and nothing of another job", async () => {
+    const db = await migratedDatabase();
+    try {
+      await db.transaction(async (tx) => {
+        await jobs.upsert(tx, submittedJob(7n, NOW - 600n));
+        await jobs.upsert(tx, submittedJob(8n, NOW - 600n));
+        // Written out of chain order on purpose: the endpoint sorts, the journal does not.
+        await jobEvents.insertIfAbsent(tx, {
+          chainId: CHAIN,
+          blockNumber: 61_000_002n,
+          logIndex: 3,
+          txHash: TX,
+          contract: "ComplianceModule",
+          name: "ReleaseRefused",
+          jobId: 7n,
+          args: { decoded: { jobId: "7", statement: `0x${"00".repeat(32)}`, reason: `0x${Buffer.from("no proof bound").toString("hex").padEnd(64, "0")}` } },
+        });
+        await jobEvents.insertIfAbsent(tx, {
+          chainId: CHAIN,
+          blockNumber: 61_000_002n,
+          logIndex: 1,
+          txHash: TX,
+          contract: "SquareHook",
+          name: "ComplianceChecked",
+          jobId: 7n,
+          args: { decoded: { jobId: "7", payee: PROVIDER, amount: "246250", verified: false } },
+        });
+        await jobEvents.insertIfAbsent(tx, {
+          chainId: CHAIN,
+          blockNumber: 61_000_001n,
+          logIndex: 9,
+          txHash: TX,
+          contract: "SquareJob",
+          name: "JobSubmitted",
+          jobId: 7n,
+          args: { decoded: { jobId: "7" } },
+        });
+        await jobEvents.insertIfAbsent(tx, {
+          chainId: CHAIN,
+          blockNumber: 61_000_002n,
+          logIndex: 2,
+          txHash: TX,
+          contract: "SquareJob",
+          name: "JobSubmitted",
+          jobId: 8n,
+          args: { decoded: { jobId: "8" } },
+        });
+      });
+      const app = apiOver(db);
+
+      const response = await app.request("/jobs/7/events");
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { jobId: string; items: { contract: string; name: string; blockNumber: string; logIndex: number; txHash: string; args: { decoded: Record<string, unknown> } }[] };
+      expect(body.jobId).toBe("7");
+      expect(body.items.map((item) => [item.name, item.blockNumber, item.logIndex])).toEqual([
+        ["JobSubmitted", "61000001", 9],
+        ["ComplianceChecked", "61000002", 1],
+        ["ReleaseRefused", "61000002", 3],
+      ]);
+      expect(body.items[0]?.txHash).toBe(TX);
+      expect(body.items[1]?.args.decoded).toEqual({ jobId: "7", payee: PROVIDER, amount: "246250", verified: false });
+      expect(body.items.every((item) => item.args.decoded["jobId"] === "7")).toBe(true);
+
+      const empty = (await (await app.request("/jobs/8/events")).json()) as { items: unknown[] };
+      expect(empty.items).toHaveLength(1);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  it("is 404 for a job the mirror does not hold and 400 for what is not a job id", async () => {
+    const db = await migratedDatabase();
+    try {
+      const app = apiOver(db);
+      expect((await app.request("/jobs/42/events")).status).toBe(404);
+      expect((await app.request("/jobs/x/events")).status).toBe(400);
     } finally {
       await db.close();
     }

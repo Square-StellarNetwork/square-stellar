@@ -48,3 +48,26 @@ export function useIndexerStatus() {
     queryFn: () => fetchJson<IndexerStatus>("/status"),
   });
 }
+
+export interface IndexerJobEvent {
+  contract: string;
+  name: string;
+  blockNumber: string;
+  logIndex: number;
+  txHash: string;
+  args: { decoded?: Record<string, unknown> } | Record<string, unknown>;
+}
+
+/**
+ * The settlement record of one job: every event the indexer journaled for
+ * it (`GET /jobs/:id/events`). Only read once the job is past settlement,
+ * since that is when the hook and the module have said their piece.
+ */
+export function useJobEvents(jobId: bigint | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["indexer", "job-events", indexerUrl, jobId === null ? null : jobId.toString()],
+    enabled: indexerUrl !== null && jobId !== null && enabled,
+    refetchInterval: POLL_MS,
+    queryFn: async () => (await fetchJson<{ jobId: string; items: IndexerJobEvent[] }>(`/jobs/${(jobId as bigint).toString()}/events`)).items,
+  });
+}

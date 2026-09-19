@@ -3,7 +3,7 @@ import { isAddressEqual, zeroAddress, type Address } from "viem";
 import { keeperEvaluates, refundAvailable, submitAvailable } from "./actions";
 import type { JobSummary } from "./square";
 
-export type InboxKind = "submit" | "fund" | "budget" | "dispute" | "finalize" | "refund";
+export type InboxKind = "submit" | "evaluate" | "fund" | "budget" | "dispute" | "finalize" | "refund";
 
 export interface InboxGroup {
   kind: InboxKind;
@@ -14,6 +14,7 @@ export interface InboxGroup {
 
 const COPY: Record<InboxKind, { title: string; body: string }> = {
   submit: { title: "Waiting for your deliverable", body: "You are the provider and the escrow is funded. Submit the hash before the deadline shown on each job, which is its expiry less the settlement horizon snapshotted on it." },
+  evaluate: { title: "Waiting for your evaluation", body: "You are the evaluator on the record and the provider has submitted. Complete to pay the provider, or reject to refund the client." },
   fund: { title: "Waiting for your funding", body: "The budget is agreed. Approve USDC and fund to fix the fees and start the clock." },
   budget: { title: "Needs a budget", body: "You opened these jobs without a budget. Agree one before funding." },
   dispute: { title: "Your challenge window is open", body: "The provider submitted. You may still dispute with a bond until the window closes." },
@@ -21,7 +22,7 @@ const COPY: Record<InboxKind, { title: string; body: string }> = {
   refund: { title: "Expired, refund available", body: "Nothing was settled before the expiry and no optimistic evaluator holds the job. Claim the escrow back." },
 };
 
-const ORDER: InboxKind[] = ["submit", "fund", "budget", "dispute", "finalize", "refund"];
+const ORDER: InboxKind[] = ["submit", "evaluate", "fund", "budget", "dispute", "finalize", "refund"];
 
 function same(a: Address, b: Address): boolean {
   return isAddressEqual(a, b);
@@ -30,7 +31,11 @@ function same(a: Address, b: Address): boolean {
 export function classify(job: JobSummary, address: Address, keeperEvaluator: Address, now: number): InboxKind | null {
   const client = same(job.client, address);
   const provider = same(job.provider, address);
-  if (!client && !provider) return null;
+  // A human evaluator: the record names this wallet and it is not the keeper,
+  // so nothing settles the submission but its own decision.
+  if (!client && !provider) {
+    return job.status === JobStatus.Submitted && same(job.evaluator, address) && !keeperEvaluates(job, keeperEvaluator) ? "evaluate" : null;
+  }
   if (client && refundAvailable(job, keeperEvaluator, now)) return "refund";
   const live = now < job.expiredAt;
   switch (job.status) {
@@ -70,5 +75,5 @@ export function walletInbox(
 
 export function walletJobCount(jobs: readonly JobSummary[], address: Address | undefined): number {
   if (!address) return 0;
-  return jobs.filter((job) => same(job.client, address) || same(job.provider, address)).length;
+  return jobs.filter((job) => same(job.client, address) || same(job.provider, address) || same(job.evaluator, address)).length;
 }

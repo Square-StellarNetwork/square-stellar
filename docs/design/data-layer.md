@@ -81,6 +81,7 @@ create table job_events (                 -- append-only, the replay journal
   args          jsonb   not null,
   primary key (chain_id, block_number, log_index)
 );
+create index job_events_by_job on job_events (chain_id, job_id, block_number, log_index) where job_id is not null;  -- the settlement record of one job (0015)
 
 create table jobs (
   chain_id          bigint        not null,
