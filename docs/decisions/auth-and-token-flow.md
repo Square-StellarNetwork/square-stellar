@@ -185,18 +185,27 @@ The EVM access rule of every state-changing function, as the Solidity contracts
 implement it, becomes the `require_auth` below. "Contract" means the caller is
 the named contract, so the call authorizes itself.
 
+`require_auth()` on an argument only proves that the argument signed. Where a
+row says "who must be the job's …", the contract also compares the argument
+with the stored record and refuses a mismatch, as principle 4 above does for
+`set_provider`. That comparison is the EVM `msg.sender != job.…` check
+(`SquareJob.sol:85, 138, 153, 166, 191, 209, 251-253`), and without it any
+signer, contracts included, would pass. The parameter types after the signer
+are the ones [call-graph-on-soroban.md](call-graph-on-soroban.md#7-typed-parameters-per-action-the-proof-never-travels-in-them)
+fixes: only `submit` and `complete` carry a params struct.
+
 ### `square_job`
 
 | Function | Authorizes | Token movement |
 |---|---|---|
 | `create_job(client, provider, evaluator, expired_at, description, hook)` | `client` | — |
-| `set_provider(client, job_id, provider, params)` | `client`, who must be the job's client | — |
-| `set_budget(caller, job_id, amount, params)` | `caller`, who must be the client or the provider | — |
-| `fund(client, job_id, expected_budget, params)` | `client` | `client → square_job` (budget) |
-| `set_compliance_proof(client, job_id, proof)` | `client` | — |
-| `submit(provider, job_id, deliverable, params)` | `provider` | — |
-| `complete(evaluator, job_id, reason, params)` | `evaluator`: the keeper evaluator contract (invoker auth), or a `G…` evaluator who signs | — (credits only) |
-| `reject(caller, job_id, reason, params)` | the client while Open; the evaluator while Funded or Submitted | — (credits only) |
+| `set_provider(client, job_id, provider)` | `client`, who must be the job's client | — |
+| `set_budget(caller, job_id, amount)` | `caller`, who must be the client or the provider | — |
+| `fund(client, job_id, expected_budget)` | `client`, who must be the job's client | `client → square_job` (budget) |
+| `set_compliance_proof(client, job_id, proof)` | `client`, who must be the job's client | — |
+| `submit(provider, job_id, deliverable, params: SubmitParams)` | `provider`, who must be the job's provider | — |
+| `complete(evaluator, job_id, reason, params: CompleteParams)` | `evaluator`, who must be the job's evaluator: the keeper evaluator contract (invoker auth), or a `G…` evaluator who signs | — (credits only) |
+| `reject(caller, job_id, reason)` | `caller`, who must be the job's client while Open, or the job's evaluator while Funded or Submitted | — (credits only) |
 | `claim_refund(job_id)` | nobody: anyone may crank it after expiry | — (credits only) |
 | `withdraw_to(account, to, amount)` | `account`, the holder of the balance | `square_job → to` |
 | `set_fees`, `set_hook_whitelist`, `skim` | owner ([upgradeability-and-governance.md](upgradeability-and-governance.md)) | `skim`: `square_job → to` |
@@ -228,7 +237,7 @@ the named contract, so the call authorizes itself.
 |---|---|---|
 | `list(seller, job_id, price)` | `seller`, who must be the job's provider | — |
 | `buy(buyer, job_id, expected_price, salt, eligibility)` | `buyer` | `buyer → seller` (price), direct |
-| `cancel(seller, job_id)` | `seller` | — |
+| `cancel(seller, job_id)` | `seller`, who must be the listing's seller (`ClaimMarket.sol:76`) | — |
 
 ### `square_hook`, `compliance_module`, `policy_registry`, `screening_registry`
 
