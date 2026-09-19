@@ -15,7 +15,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./stellar": {
+      "types": "./dist/stellar/index.d.ts",
+      "default": "./dist/stellar/index.js"
     }
+  },
+  "bin": {
+    "square-agent": "./dist/stellar/run.js"
   },
   "files": [
     "dist",
@@ -34,6 +41,7 @@
     "@squaresdk/data": "file:../data",
     "@squaresdk/did-resolver": "file:../did-resolver",
     "@squaresdk/x402": "file:../x402",
+    "@stellar/stellar-sdk": "16.3.0",
     "hono": "^4.7.0",
     "viem": "^2.48.0"
   },
