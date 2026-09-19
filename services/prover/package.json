@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@squaresdk/observability": "file:../../packages/observability",
+    "@stellar/stellar-sdk": "16.3.0",
     "circomlibjs": "^0.1.7",
     "cors": "^2.8.5",
     "express": "^4.21.2",

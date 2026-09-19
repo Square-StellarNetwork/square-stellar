@@ -13,21 +13,27 @@
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 
-const USDC = '0x3600000000000000000000000000000000000000';
+// Real testnet addresses (docs/decisions/stellar-target.md, auth-and-token-flow.md,
+// address-field-mapping.md): the USDC Stellar Asset Contract, the auth probe's
+// client and payer, and the pubnet USDC issuer as the blocked account.
+const USDC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
+const PROVIDER = 'GBGFKN6QTTVHBK6JLS2NAVDBW6VRA74HUPF7HS66HXL7YGEACA4SXOQ3';
+const BLOCKED = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+const OPERATOR = 'GCYUOI4ZTDRVX4STYKSQOZRSD3ZJ6ALX43WTS2N3M5LES63PW5IM272D';
 
 const VALID = Object.freeze({
   policy_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
   policy_salt: '7777777777777777777777777777777777777777777777777777777777777',
-  operator_id: '0x3333333333333333333333333333333333333333',
-  max_daily_spend: '100000000',
-  max_per_transaction: '10000000',
+  operator_id: OPERATOR,
+  max_daily_spend: '1000000000',      // 100 USDC at 7 decimals
+  max_per_transaction: '100000000',   // 10 USDC
   allowed_endpoint_categories: ['api-call'],
-  blocked_addresses: ['0x2222222222222222222222222222222222222222'],
+  blocked_addresses: [BLOCKED],
   token_whitelist: [USDC],
   payment_token: USDC,
-  payment_recipient: '0x1111111111111111111111111111111111111111',
-  payment_amount: '5000000',
-  daily_spent_before: '50000000',
+  payment_recipient: PROVIDER,
+  payment_amount: '50000000',         // 5 USDC
+  daily_spent_before: '500000000',    // 50 USDC
   payment_endpoint_category: 'api-call',
   current_unix_timestamp: '1788356730',
 });
@@ -169,9 +175,14 @@ describe('POST /prove refuses a bad request before proving', () => {
   // square#251: the eleven requests the issue measured, each purely the caller's
   // mistake, each answered 500 and counted as a proof failure before the format
   // checks moved to the gate. Each message is the one the issue recorded.
+  const NOT_AN_ADDRESS = 'must be a Stellar account (G…) or contract (C…) address';
   const MALFORMED = [
-    ['an operator_id that is not an address', { operator_id: 'acme-corp' }, 'operator_id: must be a 20-byte hex address'],
-    ['a payment_recipient with bad hex', { payment_recipient: '0x11111111111111111111111111111111111111zz' }, 'payment_recipient: must be a 20-byte hex address'],
+    ['an operator_id that is not an address', { operator_id: 'acme-corp' }, `operator_id: ${NOT_AN_ADDRESS}`],
+    ['a payment_recipient with a bad checksum', { payment_recipient: PROVIDER.slice(0, -1) + (PROVIDER.endsWith('A') ? 'B' : 'A') }, `payment_recipient: ${NOT_AN_ADDRESS}`],
+    ['a payment_recipient in lower case, which is not a strkey', { payment_recipient: PROVIDER.toLowerCase() }, `payment_recipient: ${NOT_AN_ADDRESS}`],
+    ['a muxed account, which no contract stores or pays', { payment_recipient: 'MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAAAA' }, `payment_recipient: ${NOT_AN_ADDRESS}`],
+    ['a payment_token that is a secret seed rather than an address', { payment_token: 'SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW' }, `payment_token: ${NOT_AN_ADDRESS}`],
+    ['a 0x address with bad hex', { payment_recipient: '0x11111111111111111111111111111111111111zz' }, `payment_recipient: ${NOT_AN_ADDRESS}`],
     ['a policy_id that is not a UUID', { policy_id: 'not-a-uuid' }, 'policy_id: not a valid UUID'],
     ['an unknown weekday name', { time_restrictions: [{ ...window_(9, 17), allowed_days: ['mondayy'] }] }, 'time_restrictions.allowed_days: contains an unknown weekday name'],
     ['a fractional payment_amount', { payment_amount: 5000000.5 }, 'payment_amount: must be a whole number'],
@@ -179,9 +190,10 @@ describe('POST /prove refuses a bad request before proving', () => {
     ['a max_daily_spend that is not a number', { max_daily_spend: 'a lot' }, 'max_daily_spend: must be a non-negative integer'],
     ['an empty category string', { payment_endpoint_category: '' }, 'payment_endpoint_category: must not be empty'],
     ['a category over 32 bytes', { allowed_endpoint_categories: ['x'.repeat(33)] }, 'allowed_endpoint_categories: exceeds the 32-byte limit'],
-    ['a blocked_addresses entry that is an object', { blocked_addresses: [{ address: '0x2222222222222222222222222222222222222222' }] }, 'blocked_addresses: must be a string'],
+    ['a blocked_addresses entry that is an object', { blocked_addresses: [{ address: BLOCKED }] }, 'blocked_addresses: must be a string'],
     ['a stripe_receipt_hash that is not a number', { stripe_receipt_hash: 'garbage' }, 'stripe_receipt_hash: must be a non-negative integer'],
-    // square#253: well formed, and still no proof can come out of it.
+    // square#253: well formed, and still no proof can come out of it. Only the
+    // transitional 20-byte form can reach zero; under f no address does.
     ['a payment_token that is the zero address', { payment_token: `0x${'0'.repeat(40)}` }, 'payment_token: must not be the zero address; the circuit rejects a zero lookup key'],
     ['a payment_recipient that is the zero address', { payment_recipient: `0x${'0'.repeat(40)}` }, 'payment_recipient: must not be the zero address; the circuit rejects a zero lookup key'],
   ];

@@ -479,7 +479,7 @@ describe('policy_salt has to be a secret, and the service says so', () => {
 // The reason the floor exists, as a test rather than a claim.
 describe('a guessable policy_salt opens the ceilings it is supposed to hide', () => {
   const MAX_PER_TX = 1;
-  const CEILING = 25_000_000n;
+  const CEILING = 250_000_000n; // 25 USDC at 7 decimals
 
   async function recover(victimSalt) {
     const { deriveSalts, leafHash } = await import('../src/commitment.js');
@@ -490,7 +490,7 @@ describe('a guessable policy_salt opens the ceilings it is supposed to hide', ()
     for (const guess of ['0', '1', '2']) {
       const salts = await deriveSalts(guess);
       for (let usdc = 5n; usdc <= 100n; usdc += 5n) {
-        if ((await leafHash(MAX_PER_TX, salts[MAX_PER_TX], usdc * 1_000_000n)) === leaf) return usdc;
+        if ((await leafHash(MAX_PER_TX, salts[MAX_PER_TX], usdc * 10_000_000n)) === leaf) return usdc;
       }
     }
     return null;

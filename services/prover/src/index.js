@@ -194,6 +194,9 @@ app.post('/prove', async (req, res) => {
       policy_data_hash: result.policy_data_hash,
       policy_data_hash_hex: result.policy_data_hash_hex,
       public_signals: result.public_signals,
+      // The proof as the Stellar contracts take it, and the Solidity shape
+      // beside it while the EVM contracts remain (src/convert.js).
+      soroban: result.soroban,
       solidity: result.solidity,
       raw_proof: result.raw_proof,
       raw_public: result.raw_public,

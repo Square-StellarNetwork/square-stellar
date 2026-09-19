@@ -22,6 +22,17 @@
 //   - `groth16`, `proof_hash` and `receipt_bytes` are gone. They encoded a
 //     proof for groth16-solana; `solidity` replaces them with the arguments the
 //     on-chain verifier actually takes.
+//
+// #21 moved it to Stellar (docs/decisions/stellar-target.md):
+//
+//   - Every address field takes a Stellar address, a G… account or a C…
+//     contract strkey, carried into the circuit as f(addr)
+//     (docs/decisions/address-field-mapping.md). A 20-byte 0x address is still
+//     accepted, as its raw value, while the EVM contracts remain.
+//   - Amounts are USDC base units at 7 decimals, the Stellar Asset Contract's.
+//   - `soroban` carries the proof as the Stellar verifier and kernel take it,
+//     a 512-byte blob (docs/decisions/groth16-on-soroban.md), beside
+//     `solidity`, which stays until those contracts go.
 export const openapiSpec = {
   openapi: '3.0.3',
   info: {
@@ -302,36 +313,36 @@ export const openapiSpec = {
             // A placeholder fails validation loudly instead.
             example: 'GENERATE-32-RANDOM-BYTES-DO-NOT-COPY-THIS',
           },
-          operator_id: { type: 'string', description: '20-byte EVM address, 0x-prefixed.' },
+          operator_id: { type: 'string', description: 'Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
           max_daily_spend: {
             type: 'string',
-            description: 'USDC base units, 6 decimals. Must be under 2^64.',
+            description: 'USDC base units, 7 decimals, the Stellar Asset Contract\'s. Must be under 2^64.',
           },
           max_per_transaction: {
             type: 'string',
-            description: 'USDC base units, 6 decimals. Must be under 2^64.',
+            description: 'USDC base units, 7 decimals, the Stellar Asset Contract\'s. Must be under 2^64.',
           },
           allowed_endpoint_categories: {
             type: 'array', items: { type: 'string', maxLength: 32 }, maxItems: 8,
           },
           blocked_addresses: {
             type: 'array', maxItems: 10,
-            items: { type: 'string', description: '20-byte EVM address.' },
+            items: { type: 'string', description: 'Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
           },
           token_whitelist: {
             type: 'array', maxItems: 10,
-            items: { type: 'string', description: '20-byte EVM address.' },
+            items: { type: 'string', description: 'The token contracts the policy allows: the USDC Stellar Asset Contract, CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA on testnet. Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
           },
           payment_amount: {
             type: 'string',
-            description: 'USDC base units, 6 decimals. Must be under 2^64.',
+            description: 'USDC base units, 7 decimals, the Stellar Asset Contract\'s. Must be under 2^64.',
           },
-          payment_token: { type: 'string', description: '20-byte EVM address.' },
-          payment_recipient: { type: 'string', description: '20-byte EVM address.' },
+          payment_token: { type: 'string', description: 'The token contract the payment is in. Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
+          payment_recipient: { type: 'string', description: 'The payee. Stellar address: a G… account or a C… contract strkey, carried into the circuit as f(addr) (docs/decisions/address-field-mapping.md). A 20-byte 0x EVM address is still accepted while the EVM contracts remain.' },
           payment_endpoint_category: { type: 'string', maxLength: 32 },
           daily_spent_before: {
             type: 'string',
-            description: 'USDC base units, 6 decimals. Must be under 2^64.',
+            description: 'USDC base units, 7 decimals, the Stellar Asset Contract\'s. Must be under 2^64.',
           },
           current_unix_timestamp: { type: 'string', description: 'Seconds since the epoch.' },
           stripe_receipt_hash: {
@@ -385,12 +396,27 @@ export const openapiSpec = {
               + 'is_compliant, policy_data_hash, recipient, amount, token, '
               + 'daily_spent_before, current_unix_timestamp, stripe_receipt_hash.',
           },
+          soroban: {
+            type: 'object',
+            description:
+              'The proof as the Stellar contracts take it (docs/decisions/groth16-on-soroban.md): '
+              + '`proof` is the 512-byte blob A(64) || B(128) || C(64) || 8 x signal(32), '
+              + 'what groth16_verifier.verify_proof reads and square_job.set_compliance_proof '
+              + 'stores; a, b, c and input are its parts. All 0x-prefixed hex.',
+            properties: {
+              a: { type: 'string', description: 'G1, 64 bytes: be(X) || be(Y).' },
+              b: { type: 'string', description: 'G2, 128 bytes: be(X.c1) || be(X.c0) || be(Y.c1) || be(Y.c0), imaginary part first.' },
+              c: { type: 'string', description: 'G1, 64 bytes.' },
+              input: { type: 'array', items: { type: 'string' }, minItems: 8, maxItems: 8, description: 'The eight public signals, 32 bytes each, big-endian, unreduced.' },
+              proof: { type: 'string', description: 'The 512-byte blob, 0x-prefixed hex.' },
+            },
+          },
           solidity: {
             type: 'object',
             description:
-              'Arguments for the on-chain verifier\'s '
+              'Arguments for the Solidity verifier\'s '
               + 'verifyProof(uint[2] a, uint[2][2] b, uint[2] c, uint[8] input), '
-              + 'as 32-byte hex strings.',
+              + 'as 32-byte hex strings. Stays while the EVM contracts remain.',
             properties: {
               a: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 },
               b: { type: 'array', items: { type: 'array', items: { type: 'string' } } },

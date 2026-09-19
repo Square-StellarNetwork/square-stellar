@@ -98,7 +98,7 @@ describe('observability endpoints', () => {
       .post('/prove')
       .send({ ...VALID_SHAPE, blocked_addresses: ['not-an-address'] });
     expect(response.status).toBe(400);
-    expect(response.body.error).toBe('blocked_addresses: must be a 20-byte hex address');
+    expect(response.body.error).toBe('blocked_addresses: must be a Stellar account (G…) or contract (C…) address');
     expect(await failures()).toBe(before);
   });
 

@@ -16,7 +16,7 @@ import {
 import { deriveSalts, POLICY_FIELDS } from './commitment.js';
 import { toFieldString, toHourString, toIdentifier, toPolicySaltString } from './normalize.js';
 import { evaluateRules } from './rules.js';
-import { encodeForSolidity } from './convert.js';
+import { encodeForSolidity, encodeForSoroban } from './convert.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -210,6 +210,7 @@ export function validateRequest(req) {
   //
   // The category is checked on the value the circuit compares, its Poseidon
   // image, rather than on the string: that is the value that has to be non-zero.
+  // Under f no Stellar address maps to zero; the raw 20-byte form still can.
   for (const field of ['payment_token', 'payment_recipient']) {
     if (addressToField(req[field], field) === '0') {
       throw new Error(`${field}: must not be the zero address; the circuit rejects a zero lookup key`);
@@ -382,10 +383,10 @@ export function validateRequest(req) {
 
 // Shape an incoming HTTP payload into the witness inputs the circuit expects.
 //
-// Amounts are USDC base units at 6 decimals, not wei — see
-// docs/decisions/erc20-vs-native-usdc.md. The circuit range-checks them to 64
-// bits, so an 18-decimal figure fails witness generation rather than being
-// silently truncated.
+// Amounts are USDC base units at 7 decimals, the Stellar Asset Contract's
+// (docs/decisions/stellar-target.md); on Arc they were the ERC-20's 6. The
+// circuit range-checks them to 64 bits, so a figure in some other unit fails
+// witness generation rather than being silently truncated.
 export async function buildCircuitInput(request) {
   validateRequest(request);
 
@@ -451,8 +452,8 @@ export async function buildCircuitInput(request) {
     time_start_hour_utc: timeStartHourUtc,
     time_end_hour_utc: timeEndHourUtc,
 
-    // Payment (mirrored to the public signals). A 20-byte address is one field
-    // element, which is what took the layout from ten signals to eight.
+    // Payment (mirrored to the public signals). An address is one field
+    // element, f(addr), which is what keeps the layout at eight signals.
     recipient_in: addressToField(request.payment_recipient, 'payment_recipient'),
     amount_in: toFieldString(request.payment_amount, 'payment_amount'),
     token_in: addressToField(request.payment_token, 'payment_token'),
@@ -536,7 +537,12 @@ export async function generateProof(request) {
     policy_data_hash_hex: policyDataHashHex,
     public_signals: signals,
 
-    // Ready to pass to the on-chain verifier's verifyProof(a, b, c, input).
+    // The proof as the Stellar contracts take it: `proof` is the 512-byte blob
+    // `groth16_verifier.verify_proof` reads and `square_job.set_compliance_proof`
+    // stores; a, b, c and input are its parts.
+    soroban: encodeForSoroban(proof, publicSignals),
+    // The Solidity verifier's verifyProof(a, b, c, input), while the EVM
+    // contracts remain (docs/upstream/foundry-to-soroban.md).
     solidity: encodeForSolidity(proof, publicSignals),
     raw_proof: proof,
     raw_public: publicSignals,

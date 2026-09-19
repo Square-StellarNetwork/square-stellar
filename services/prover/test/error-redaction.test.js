@@ -177,7 +177,7 @@ describe('normalize', () => {
 describe('hash helpers carry the label, not the value', () => {
   it('addressToField reports the label on a malformed address', () => {
     expect(() => addressToField('0xnope', 'blocked_addresses'))
-      .toThrow(/^blocked_addresses: must be a 20-byte hex address$/);
+      .toThrow(/^blocked_addresses: must be a Stellar account \(G…\) or contract \(C…\) address$/);
   });
 
   it('hashCategory reports the label on an over-long category', async () => {
