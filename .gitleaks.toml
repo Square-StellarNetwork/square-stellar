@@ -101,3 +101,17 @@ kimseye ait degildir. Istisna YOL degil DEGER bazinda, tam bu seed icin: baska
 bir S... seed'i (#44'un ekleyecegi Stellar kurali dahil) yine yakalanir."""
 regexTarget = "line"
 regexes = ['''SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW''']
+
+[[allowlists]]
+description = """USDC'nin Stellar Asset Contract kimlikleri (testnet ve pubnet),
+docs/decisions/stellar-target.md'de kaydedilen, zincirden turetilen herkese
+acik adresler. Agent card semasi ve ornekleri fiyatin token'ini bu kimlikle
+yaziyor; generic-api-key kurali, alan adinin `token` olmasi ve degerin 56
+karakterlik base32 olmasi yuzunden takiliyor (CCTP adresleri icin yukaridaki
+istisnayla ayni durum). Istisna YOL degil DEGER bazinda: ayni dosyalara girecek
+baska bir C... kimligi yine yakalanir."""
+regexTarget = "line"
+regexes = [
+  '''CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA''',
+  '''CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75''',
+]

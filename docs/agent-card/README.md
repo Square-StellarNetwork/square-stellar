@@ -3,7 +3,7 @@
 The document an ERC-8004 `agentURI` resolves to.
 
 - [`schema.json`](./schema.json) — JSON Schema 2020-12
-- [`examples/`](./examples) — minimal, typical, full
+- [`examples/`](./examples) — minimal, typical, full, stellar
 
 ## Why this document exists
 
@@ -72,7 +72,36 @@ put it in an x402 payment requirement; a value that rounds differently in two la
 a bug waiting for a decimal that does not fit. `token` and `network` are explicit for the
 same reason — the predecessor hardcoded `"network": "solana"`, which names a chain family
 rather than a chain, and would have been ambiguous the moment a second Solana cluster
-mattered. CAIP-2 `eip155:5042002` names exactly one chain.
+mattered. CAIP-2 `eip155:5042002` names exactly one chain, and `stellar:testnet` exactly one
+network.
+
+## On Stellar
+
+The card does not change shape with the move to Stellar
+([docs/decisions/stellar-target.md](../decisions/stellar-target.md)); three fields widen,
+and the schema accepts both forms so a card written for Arc stays valid:
+
+| Field | eip155 | stellar |
+|---|---|---|
+| `registrations[].agentRegistry` | `eip155:<chainId>:0x…` (lowercase) | `stellar:testnet:C…` or `stellar:pubnet:C…`, the identity registry's contract id |
+| `registrations[].agentId` | the ERC-721 tokenId | the registry's `u32` agent id |
+| `x-aip.capabilities[].pricing.token` | ERC-20 address, lowercase | the Stellar Asset Contract id; USDC on testnet is `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| `x-aip.capabilities[].pricing.network` | `eip155:<chainId>` | `stellar:testnet` or `stellar:pubnet` |
+
+**`agentRegistry` is CAIP-2, not the 8004 registries' own label.** The Stellar 8004
+registries identify an agent as `stellar:{network}:{identityRegistry}#{agentId}` and write
+`testnet` or `mainnet` for the network, which their documentation notes is not CAIP-2. A
+card is read by the same clients that read `pricing.network` and x402 payment
+requirements, all CAIP-2, so the registry is named with `stellar:testnet` or
+`stellar:pubnet`; `stellar:mainnet` is refused by the schema.
+
+`pricing.amount` stays a decimal string in whole units, now with up to 7 decimals: the SAC
+reports 7. The DID service entry is a `did:aip` v3 identifier and says `"version": "v3"`;
+its syntax is [#32](https://github.com/Square-StellarNetwork/square-stellar/issues/32)'s
+to fix, and `examples/stellar.json` writes it in the form that issue names. Which identity
+registry a network uses is [#33](https://github.com/Square-StellarNetwork/square-stellar/issues/33)'s
+decision; until it is deployed, the example names the all-zero contract id
+(`CAAAA…BSC4`), which is a valid strkey and visibly a placeholder.
 
 ## The agent wallet is not in the card
 
@@ -142,10 +171,12 @@ malformed card is a client-side problem, discovered at read time by whoever fetc
 npx ajv-cli validate -s docs/agent-card/schema.json -d "docs/agent-card/examples/*.json" --spec=draft2020
 ```
 
-The three examples are the conformance set:
+The four examples are the conformance set:
 
 - `minimal.json` — only ERC-8004's required fields, no `x-aip`. A card can be this small
   and still be valid; a reader that needs `x-aip` must cope with its absence.
 - `typical.json` — one capability, A2A and DID services, x402 enabled.
 - `full.json` — several capabilities at different prices, five service types, a
   cross-registration and `supportedTrust`.
+- `stellar.json` — `typical.json` on Stellar testnet: a `stellar:testnet:C…` registry, a
+  `u32` agent id, the USDC SAC as the token, a v3 DID.

@@ -176,10 +176,12 @@ delivered or gave up — wait for the evaluator.
 ## Where the numbers come from
 
 The job status values are the contract's enum ordering, checked against the
-deployed ERC-8183 registry on Arc Testnet
-(`0x0747EEf0706327138c69792bF28Cd525089e4583`) rather than read off the ERC:
-sampling the first forty jobs returns statuses 0, 1 and 3, which under this
-ordering are `Open`, `Funded` and `Completed`, and nothing else appears.
+ERC-8183 registry that was deployed on Arc Testnet rather than read off the ERC:
+sampling the first forty jobs returned statuses 0, 1 and 3, which under this
+ordering are `Open`, `Funded` and `Completed`, and nothing else appeared. The
+Soroban kernel keeps the same six variants in the same order
+([call-graph-on-soroban.md](../decisions/call-graph-on-soroban.md), `JobStatus`),
+so nothing here changes with the move to Stellar.
 
 | | |
 |---|---|

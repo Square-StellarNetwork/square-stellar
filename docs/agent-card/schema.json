@@ -45,11 +45,14 @@
         "type": "object",
         "required": ["agentId", "agentRegistry"],
         "properties": {
-          "agentId": { "type": ["integer", "string"], "description": "ERC-721 tokenId" },
+          "agentId": {
+            "type": ["integer", "string"],
+            "description": "The registry's own id for the agent: the ERC-721 tokenId on an eip155 registry, the u32 agent id on a Stellar 8004 registry. A string when it does not fit a JSON number."
+          },
           "agentRegistry": {
             "type": "string",
-            "pattern": "^eip155:[1-9][0-9]*:0x[0-9a-f]{40}$",
-            "description": "Lowercase, matching the did:aip v2 identifier form."
+            "pattern": "^(eip155:[1-9][0-9]*:0x[0-9a-f]{40}|stellar:(pubnet|testnet):C[A-Z2-7]{55})$",
+            "description": "CAIP-2 network id, a colon, the identity registry: a lowercase address on eip155 (the did:aip v2 identifier form), the contract's strkey on stellar (the did:aip v3 form). Note that the Stellar 8004 registries' own agent identifier writes the network as testnet or mainnet, which is not CAIP-2; here it is stellar:testnet or stellar:pubnet."
           }
         },
         "additionalProperties": false
@@ -123,17 +126,17 @@
         "amount": {
           "type": "string",
           "pattern": "^[0-9]+(\\.[0-9]+)?$",
-          "description": "Decimal string, in whole token units. A string rather than a number because JSON numbers are IEEE 754 doubles and money must not round."
+          "description": "Decimal string, in whole token units, with at most the token's decimals (USDC has 6 on Arc and 7 on Stellar). A string rather than a number because JSON numbers are IEEE 754 doubles and money must not round."
         },
         "token": {
           "type": "string",
-          "pattern": "^0x[0-9a-f]{40}$",
-          "description": "ERC-20 contract address, lowercase. USDC on Arc is 0x3600000000000000000000000000000000000000."
+          "pattern": "^(0x[0-9a-f]{40}|C[A-Z2-7]{55})$",
+          "description": "The token contract: a lowercase ERC-20 address on eip155 (USDC on Arc is 0x3600000000000000000000000000000000000000), a Stellar Asset Contract id on stellar (USDC on testnet is CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA)."
         },
         "network": {
           "type": "string",
-          "pattern": "^eip155:[1-9][0-9]*$",
-          "description": "CAIP-2. The predecessor used the literal string \"solana\", which named a chain family rather than a chain."
+          "pattern": "^(eip155:[1-9][0-9]*|stellar:(pubnet|testnet))$",
+          "description": "CAIP-2: eip155:<chainId>, or stellar:pubnet and stellar:testnet. The predecessor used the literal string \"solana\", which named a chain family rather than a chain."
         }
       },
       "additionalProperties": false

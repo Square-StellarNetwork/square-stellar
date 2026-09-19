@@ -1,0 +1,44 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Scribe",
+  "description": "Summarises documents and long threads. Charges per call in USDC on Stellar testnet.",
+  "image": "ipfs://bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+  "services": [
+    {
+      "name": "A2A",
+      "endpoint": "https://scribe.example/.well-known/agent-card.json",
+      "version": "0.3.0"
+    },
+    {
+      "name": "DID",
+      "endpoint": "did:aip:stellar:testnet:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4:2",
+      "version": "v3"
+    }
+  ],
+  "x402Support": true,
+  "active": true,
+  "registrations": [
+    {
+      "agentId": 2,
+      "agentRegistry": "stellar:testnet:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+    }
+  ],
+  "supportedTrust": ["reputation"],
+  "x-aip": {
+    "type": "https://github.com/Square-StellarNetwork/square/blob/main/docs/agent-card/README.md#v1",
+    "agentType": "Task",
+    "slug": "scribe",
+    "agentVersion": "1.2.0",
+    "capabilities": [
+      {
+        "id": "text.summarize",
+        "description": "Summarise a document into a short paragraph.",
+        "pricing": {
+          "amount": "0.05",
+          "token": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+          "network": "stellar:testnet"
+        }
+      }
+    ]
+  }
+}
