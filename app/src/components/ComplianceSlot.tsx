@@ -12,9 +12,9 @@ export function ComplianceSlot() {
     return (
       <p className="max-w-2xl text-caption text-graphite">
         Read from the deployed hook right now: the compliance slot is open, so no release on this deployment is proof
-        gated. The circuit and the prover are live, and a proof built from them verifies against the pairing precompiles
-        on Arc Testnet. The Groth16 verifier deployed there is superseded: it was keyed to the circuit before #119 and
-        rejects every proof this build produces. The ceremony in #16 fixes the key that gets a permanent address.
+        gated. The circuit and the prover are live, and a proof built from them verifies against Stellar&apos;s BN254 host
+        functions. The Groth16 verifier deployed there is keyed to a development proving key and is temporary: the
+        ceremony (#51) fixes the key that gets a permanent address.
       </p>
     );
   }

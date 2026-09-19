@@ -17,12 +17,12 @@ import { describeError } from "@/lib/tx";
 import { activeChain, deployment, rpcUrl } from "@/lib/wagmi";
 
 const docs = [
-  { label: "Storage layout and event schema", href: "https://github.com/Square-StellarNetwork/square/blob/main/docs/design/storage-and-events.md" },
-  { label: "SquareHook: one hook, selector routing", href: "https://github.com/Square-StellarNetwork/square/blob/main/docs/design/square-hook.md" },
-  { label: "Data layer: one Postgres, chain is the source of truth", href: "https://github.com/Square-StellarNetwork/square/blob/main/docs/design/data-layer.md" },
-  { label: "Keeper economics: why the crank is paid", href: "https://github.com/Square-StellarNetwork/square/blob/main/docs/design/keeper-economics.md" },
-  { label: "ERC-20 versus native USDC", href: "https://github.com/Square-StellarNetwork/square/blob/main/docs/decisions/erc20-vs-native-usdc.md" },
-  { label: "Gas, measured", href: "https://github.com/Square-StellarNetwork/square/blob/main/docs/deploy/gas.md" },
+  { label: "Stellar: the target network, the protocol pins and USDC", href: "https://github.com/Square-StellarNetwork/square-stellar/blob/main/docs/decisions/stellar-target.md" },
+  { label: "Storage layout and event schema", href: "https://github.com/Square-StellarNetwork/square-stellar/blob/main/docs/design/storage-and-events.md" },
+  { label: "SquareHook: one hook, selector routing", href: "https://github.com/Square-StellarNetwork/square-stellar/blob/main/docs/design/square-hook.md" },
+  { label: "Data layer: one Postgres, chain is the source of truth", href: "https://github.com/Square-StellarNetwork/square-stellar/blob/main/docs/design/data-layer.md" },
+  { label: "Keeper economics: why the crank is paid", href: "https://github.com/Square-StellarNetwork/square-stellar/blob/main/docs/design/keeper-economics.md" },
+  { label: "A hook informs, it never vetoes", href: "https://github.com/Square-StellarNetwork/square-stellar/blob/main/docs/decisions/hook-failure-modes.md" },
 ];
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -135,19 +135,19 @@ export function NetworkView() {
 
           <PanelCard title="Registries and token" description="Addresses from the SDK deployment table for this chain.">
             <dl>
-              <Row label="USDC (ERC-20)">
+              <Row label="USDC">
                 <span className="inline-flex items-center gap-2">
                   <UsdcMark className="size-4" />
                   <AddressLink address={deployment.usdc} />
                 </span>
               </Row>
-              <Row label="ERC-8004 Identity">
+              <Row label="8004 Identity">
                 <AddressLink address={deployment.identityRegistry} />
               </Row>
-              <Row label="ERC-8004 Reputation">
+              <Row label="8004 Reputation">
                 <AddressLink address={deployment.reputationRegistry} />
               </Row>
-              <Row label="ERC-8004 Validation">
+              <Row label="8004 Validation">
                 <AddressLink address={deployment.validationRegistry} />
               </Row>
               <Row label="Compliance module">

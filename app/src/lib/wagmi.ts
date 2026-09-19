@@ -14,8 +14,10 @@ export { ANVIL_RPC_URL };
 export const ARC_EXPLORER_URL = ARC_TESTNET_EXPLORER_URL;
 /** Deterministic across chains, like the ERC-4337 addresses in @squaresdk/aa. */
 export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
-export const DOCS_URL = "https://github.com/Square-StellarNetwork/square/tree/main/docs/design";
-export const REPO_URL = "https://github.com/Square-StellarNetwork/square";
+export const DOCS_URL = "https://github.com/Square-StellarNetwork/square-stellar/tree/main/docs/design";
+export const REPO_URL = "https://github.com/Square-StellarNetwork/square-stellar";
+/** What the network is called on every surface. */
+export const NETWORK_LABEL = "Stellar Testnet";
 export const SITE_URL = "https://square-protocol.vercel.app";
 
 export const arcTestnet = defineChain({
@@ -23,7 +25,7 @@ export const arcTestnet = defineChain({
   name: networkFor(ARC_TESTNET_CHAIN_ID).name,
   nativeCurrency: networkFor(ARC_TESTNET_CHAIN_ID).nativeCurrency,
   rpcUrls: { default: { http: [ARC_TESTNET_RPC_URL] } },
-  blockExplorers: { default: { name: "Arcscan", url: ARC_EXPLORER_URL } },
+  blockExplorers: { default: { name: "Explorer", url: ARC_EXPLORER_URL } },
   contracts: { multicall3: { address: MULTICALL3_ADDRESS } },
   testnet: true,
 });
@@ -49,13 +51,14 @@ export const rpcUrl: string = rpcOverride.length > 0 ? rpcOverride : (baseChain.
 
 export const activeChain: Chain = {
   ...baseChain,
+  name: selectedChainId() === ANVIL_CHAIN_ID ? baseChain.name : NETWORK_LABEL,
   rpcUrls: { default: { http: [rpcUrl] } },
 };
 
 export const explorerUrl: string | null = activeChain.blockExplorers?.default.url ?? null;
 
-/** Whether the app is pointed at Arc, for the marks that are Arc's and not ours. */
-export const isArcNetwork: boolean = activeChain.id === ARC_TESTNET_CHAIN_ID;
+/** Whether the app is pointed at the testnet rather than a local chain, for the network mark that is Stellar's and not ours. */
+export const isTestnet: boolean = activeChain.id === ARC_TESTNET_CHAIN_ID;
 
 export const deployment = deploymentFor(activeChain.id);
 

@@ -3,7 +3,7 @@ import { Chip } from "@/components/Chip";
 import { ComplianceSlot } from "@/components/ComplianceSlot";
 import { GhostButton } from "@/components/GhostButton";
 import { LiveStats } from "@/components/LiveStats";
-import { ArcNetworkMark, BuiltOnArc } from "@/components/marks";
+import { BuiltOnStellar, StellarMark } from "@/components/marks";
 import { NetworkStrip } from "@/components/NetworkStrip";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
@@ -31,7 +31,7 @@ const features = [
 const steps = [
   { title: "Create", body: "The client opens a job with a provider, an expiry and the hash of a JSON spec. The keeper evaluator and the Square hook are bound at creation." },
   { title: "Fund", body: "A budget is agreed and USDC moves into escrow. The fee basis points are snapshotted so the net payout is fixed the moment money enters." },
-  { title: "Submit", body: "The provider posts the deliverable hash, optionally bound to an ERC-8004 agent id, and the challenge window starts counting." },
+  { title: "Submit", body: "The provider posts the deliverable hash, optionally bound to an 8004 agent id, and the challenge window starts counting." },
   { title: "Challenge", body: "The client may dispute with a bond before the window closes. Arbiters vote; a decision or a lapse settles the case." },
   { title: "Finalize", body: "Anyone finalizes once the window closes. The hook routes the payout to the payee of record and writes reputation for the agent." },
   { title: "Withdraw", body: "Nothing is pushed. Credits sit on a pull-payment ledger until the recipient withdraws to the address of its choice." },
@@ -42,8 +42,8 @@ export default function LandingPage() {
     <div className="flex flex-col gap-16">
       <section className="flex flex-col items-start gap-6 pt-8">
         <Chip dot="mint">
-          <ArcNetworkMark className="size-4" />
-          Live on Arc Testnet
+          <StellarMark className="size-4" />
+          Live on Stellar Testnet
         </Chip>
         <h1 className="max-w-4xl text-display font-semibold text-carbon">Compliance-gated settlement for agent work.</h1>
         <p className="max-w-2xl text-subheading text-graphite">
@@ -59,7 +59,7 @@ export default function LandingPage() {
             Read the design
           </GhostButton>
         </div>
-        <BuiltOnArc />
+        <BuiltOnStellar />
       </section>
 
       <section aria-label="Live numbers" className="flex flex-col gap-4">

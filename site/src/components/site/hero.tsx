@@ -1,13 +1,13 @@
-import { APP_URL, ARC_URL, DOCS_URL } from "@/lib/links";
+import { APP_URL, DOCS_URL, STELLAR_URL } from "@/lib/links";
 import { Marquee, PillButton, TextLink, type MarqueeItem } from "./primitives";
 
 const STANDARDS: MarqueeItem[] = [
-  { name: "ERC-8183", detail: "job escrow" },
-  { name: "ERC-8004", detail: "agent identity and reputation" },
-  { name: "ERC-4337", detail: "smart accounts" },
+  { name: "Soroban", detail: "job escrow" },
+  { name: "8004", detail: "agent identity and reputation" },
+  { name: "SEP-41", detail: "the token interface" },
   { name: "x402", detail: "pay per request" },
   { name: "USDC", detail: "settlement asset" },
-  { name: "Arc", detail: "the chain" },
+  { name: "Stellar", detail: "the network" },
   { name: "Groth16", detail: "compliance proofs" },
 ];
 
@@ -22,7 +22,7 @@ export function HeroSection() {
         <div className="relative z-10 flex h-full min-h-[inherit] flex-col items-start justify-start p-8 pt-32 md:p-12 md:pt-36">
           <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-fog bg-paper-white px-3 py-1 text-sm font-medium text-carbon">
             <span aria-hidden="true" className="size-1.5 rounded-full bg-mint" />
-            Live on Arc Testnet
+            Live on Stellar Testnet
           </p>
           <h1 className="mb-5 max-w-3xl text-5xl font-medium leading-[1.05] text-carbon md:text-7xl" style={{ letterSpacing: "-0.04em" }}>
             Compliance-gated settlement for agent work.
@@ -41,15 +41,14 @@ export function HeroSection() {
           </div>
 
           <a
-            href={ARC_URL}
+            href={STELLAR_URL}
             target="_blank"
             rel="noreferrer"
-            aria-label="Built on Arc"
-            className="mt-12 inline-flex items-center gap-4 text-sm text-graphite transition-colors hover:text-carbon"
-            style={{ paddingTop: 18, paddingBottom: 18 }}
+            aria-label="Built on Stellar"
+            className="mt-12 inline-flex items-center gap-4 py-4 text-sm text-graphite transition-colors hover:text-carbon"
           >
             <span>Built on</span>
-            <img src="/brand/arc-logo-black.svg" alt="Arc" width={146} height={50} style={{ height: 50, width: 146 }} />
+            <img src="/brand/stellar-logo-black.svg" alt="Stellar" width={128} height={32} style={{ height: 32, width: 128 }} />
           </a>
 
           <div className="mt-auto w-full max-w-2xl overflow-hidden pt-16">

@@ -16,14 +16,14 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
 import { SpecActions } from "@/components/SpecActions";
 import { Step, type StepState } from "@/components/Step";
-import { ArcNetworkMark, UsdcMark } from "@/components/marks";
+import { StellarMark, UsdcMark } from "@/components/marks";
 import { WalletButton } from "@/components/WalletButton";
 import { minimumExpiry } from "@/lib/actions";
 import { addressInputError, readAddressInput } from "@/lib/address";
 import { formatBps, formatDuration, formatTimestamp, formatUsdc, fromDatetimeLocal, parseUsdc, shortAddress, shortHash, toDatetimeLocal } from "@/lib/format";
 import { useNetwork, useNow, useSquare } from "@/lib/square";
 import { describeError, useTx } from "@/lib/tx";
-import { activeChain, deployment, isArcNetwork } from "@/lib/wagmi";
+import { activeChain, deployment, isTestnet } from "@/lib/wagmi";
 
 const DAY = 86_400;
 
@@ -276,7 +276,7 @@ export function NewJobView() {
                   created.budgetHash !== undefined
                     ? { title: "Fund the escrow", body: "Approve USDC and fund from the job page. The fee basis points are snapshotted at that moment." }
                     : { title: "Set the budget, then fund the escrow", body: "Set a budget on the job page first, then approve USDC and fund it. Funding a job with no budget reverts with ZeroBudget." },
-                  { title: "Hand the job to the provider", body: "Share the job link and the spec text below. The provider submits the deliverable hash before the expiry, optionally bound to an ERC-8004 agent." },
+                  { title: "Hand the job to the provider", body: "Share the job link and the spec text below. The provider submits the deliverable hash before the expiry, optionally bound to an 8004 agent." },
                   { title: "Watch the challenge window", body: `After submission you have ${network.data ? formatDuration(network.data.window.challengeWindow) : "the challenge window"} to dispute; otherwise anyone finalizes and the payee is credited.` },
                 ].map((step, index) => (
                   <li key={step.title} className="flex gap-3">
@@ -576,7 +576,7 @@ export function NewJobView() {
                 <div className="flex justify-between gap-4">
                   <dt className="text-graphite">Chain</dt>
                   <dd className="inline-flex items-center gap-1.5 tabular-nums text-carbon">
-                    {isArcNetwork ? <ArcNetworkMark className="size-3.5" /> : null}
+                    {isTestnet ? <StellarMark className="size-3.5" /> : null}
                     {activeChain.name} ({activeChain.id})
                   </dd>
                 </div>

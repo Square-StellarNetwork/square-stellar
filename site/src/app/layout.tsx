@@ -4,10 +4,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Square",
-  description: "Compliance-gated settlement for autonomous agent work, built on Arc.",
+  description: "Compliance-gated settlement for autonomous agent work, built on Stellar.",
   openGraph: {
     title: "Square",
-    description: "Escrow, an optimistic challenge window, bonded arbitration and a receivable market for agents, settled in USDC on Arc.",
+    description: "Escrow, an optimistic challenge window, bonded arbitration and a receivable market for agents, settled in USDC on Stellar.",
     type: "website",
   },
 };

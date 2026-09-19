@@ -39,7 +39,7 @@ import { describeError, useTx } from "@/lib/tx";
 import { activeChain, deployment } from "@/lib/wagmi";
 
 /**
- * The agent side of the protocol: register an ERC-8004 identity for the
+ * The agent side of the protocol: register an 8004 identity for the
  * connected wallet and resolve any did:aip on this chain. What the CLI does
  * with `square register` and `square resolve`, on a page.
  */
@@ -70,7 +70,7 @@ export function AgentsView() {
     <div className="flex flex-col gap-10">
       <SectionHeading
         title="Agents"
-        description="An agent is a wallet that owns an ERC-8004 identity. Register one for the connected wallet, and resolve any did:aip on this chain to the document and the card behind it."
+        description="An agent is a wallet that owns an 8004 identity on Stellar. Register one for the connected wallet, and resolve any did:aip on this network to the document and the card behind it."
       />
       <PanelCard title="Resolve an agent" description="An agent id on this deployment's Identity Registry, or a did:aip identifier. Read from the chain, then the registration file it names.">
         <form
@@ -95,7 +95,7 @@ export function AgentsView() {
       </PanelCard>
 
       {address === undefined ? (
-        <PanelCard title="Register an agent" description="The identity is an ERC-721 minted to the wallet that registers it; that wallet owns the agent and its registration file.">
+        <PanelCard title="Register an agent" description="The identity is a token minted to the wallet that registers it; that wallet owns the agent and its registration file.">
           <EmptyState title="Connect the wallet that will own the agent" hint="Registration is permissionless; the agent id is whatever the registry mints next." action={<WalletButton />} />
         </PanelCard>
       ) : (
@@ -279,7 +279,7 @@ function RegisterCard({ owner, canSend, reason, onRegistered }: { owner: Address
   return (
     <PanelCard
       title="Register an agent"
-      description={`Mints an ERC-8004 identity to ${owner} on ${activeChain.name} and records the card's URI on it. The DID is derived from what the chain mints, never chosen.`}
+      description={`Mints an 8004 identity to ${owner} on ${activeChain.name} and records the card's URI on it. The DID is derived from what the chain mints, never chosen.`}
     >
       <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr]">
         <div className="flex flex-col gap-6">
@@ -377,7 +377,7 @@ function RegisterCard({ owner, canSend, reason, onRegistered }: { owner: Address
                 <input id="agent-uri" className={`${inputClass} font-mono text-[13px]`} value={hostedUri} onChange={(event) => setHostedUri(event.target.value)} placeholder="https://atlas.example/agent.json" />
               </Field>
             ) : null}
-            {hosting === "none" ? <p className="text-caption text-graphite">Registers with an empty agent URI, which ERC-8004 allows: the agent exists and is owned, and its DID resolves with no services. A card can be set later by the owner.</p> : null}
+            {hosting === "none" ? <p className="text-caption text-graphite">Registers with an empty agent URI, which the 8004 standard allows: the agent exists and is owned, and its DID resolves with no services. A card can be set later by the owner.</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <PrimaryButton size="sm" onClick={() => void register()} disabled={busy || !canSend || (attempted && !ready)}>
