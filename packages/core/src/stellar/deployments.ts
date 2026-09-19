@@ -1,5 +1,5 @@
 import { isAccountAddress, isContractAddress } from "./address.js";
-import { isStellarNetworkId, networks, passphraseOf, usdcAsset, type StellarNetworkId, type UsdcAsset } from "./network.js";
+import { isStellarNetworkId, issuedToken, nativeToken, networks, passphraseOf, usdcAsset, type PaymentToken, type StellarNetworkId, type UsdcAsset } from "./network.js";
 
 /**
  * The nine Soroban contracts, by crate name (contracts/contracts/<name>),
@@ -20,6 +20,9 @@ export const SQUARE_CONTRACTS = [
 
 export type SquareContractName = (typeof SQUARE_CONTRACTS)[number];
 
+/** What a deployment record can name besides the crates: the payment token, and USDC when it is not the token. */
+export type TokenName = "token" | "usdc";
+
 /**
  * The three 8004 registries the hook writes to and the DID resolver reads.
  * Which deployment of them a network uses is #33's decision; the record
@@ -29,15 +32,21 @@ export const AGENT_REGISTRIES = ["identity", "reputation", "validation"] as cons
 
 export type AgentRegistryName = (typeof AGENT_REGISTRIES)[number];
 
+/**
+ * A deployment. The MVP (milestone "MVP — testnet") deploys the kernel alone,
+ * paid in native XLM, so only `squareJob` and `token` are certain; the other
+ * contracts, USDC and the 8004 registries arrive with their phase-2 issues
+ * and are named by the record when they exist.
+ */
 export interface SquareDeployment {
   network: StellarNetworkId;
   networkPassphrase: string;
   squareJob: string;
-  keeperEvaluator: string;
-  arbitration: string;
-  claimMarket: string;
-  squareHook: string;
-  policyRegistry: string;
+  keeperEvaluator?: string;
+  arbitration?: string;
+  claimMarket?: string;
+  squareHook?: string;
+  policyRegistry?: string;
   /**
    * The compliance module in the hook's slot and the verifier it calls, when
    * the record names them. Optional because a stack can run with the slot
@@ -48,10 +57,13 @@ export interface SquareDeployment {
   groth16Verifier?: string;
   /** The sanctions screening registry, when the record names one; same reasoning. */
   screeningRegistry?: string;
-  usdc: UsdcAsset;
-  identityRegistry: string;
-  reputationRegistry: string;
-  validationRegistry: string;
+  /** The token the kernel was deployed with: what every job is paid in. */
+  token: PaymentToken;
+  /** Circle's USDC on this network, when the record names it (phase 2; the token itself when the kernel is paid in USDC). */
+  usdc?: UsdcAsset;
+  identityRegistry?: string;
+  reputationRegistry?: string;
+  validationRegistry?: string;
   /** The ledger the record was written at: where an indexer starts reading events from. */
   deployLedger?: number;
 }
@@ -73,7 +85,7 @@ export class InvalidDeploymentError extends Error {
 /**
  * The deployments compiled into this package, one per network, filled in as
  * the stacks are deployed: the local stack's record is written by its deployer
- * (#43) and read from disk, the testnet record by #45. Until then
+ * (#43) and read from disk, the testnet record by #19/#45. Until then
  * `deploymentFor` knows nothing and says so. A test asserts that whatever is
  * here agrees with contracts/deployments/<network>.json, the record the
  * deploy scripts write.
@@ -103,7 +115,8 @@ const contractFields: Record<SquareContractName, keyof SquareDeployment> = {
   groth16_verifier: "groth16Verifier",
 };
 
-const OPTIONAL_CONTRACTS: ReadonlySet<SquareContractName> = new Set(["compliance_module", "screening_registry", "groth16_verifier"]);
+/** The kernel is the deployment; everything else is named when it exists. */
+const REQUIRED_CONTRACTS: ReadonlySet<SquareContractName> = new Set(["square_job"]);
 
 const registryFields: Record<AgentRegistryName, keyof SquareDeployment> = {
   identity: "identityRegistry",
@@ -115,12 +128,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isAbsent(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
 function contractId(record: Record<string, unknown>, key: string, where: string): string {
   const value = record[key];
   if (typeof value !== "string" || !isContractAddress(value)) {
     throw new InvalidDeploymentError(`${where}.${key} is not a contract address (C…)`);
   }
   return value;
+}
+
+/**
+ * `token` in a record: `{ "code": "XLM" }` for the native asset, or
+ * `{ "code": "USDC", "issuer": "G…" }` for an issued one; a `contractId`
+ * given alongside must be the SAC those derive to, so a record cannot name a
+ * token that is not the asset it says.
+ */
+function paymentToken(json: unknown, networkPassphrase: string): PaymentToken {
+  if (!isRecord(json)) throw new InvalidDeploymentError("token is missing: the asset the kernel is paid in");
+  const code = json["code"];
+  if (typeof code !== "string" || !/^[A-Za-z0-9]{1,12}$/.test(code)) throw new InvalidDeploymentError("token.code is not an asset code");
+  const issuer = json["issuer"];
+  let token: PaymentToken;
+  if (code.toUpperCase() === "XLM" && isAbsent(issuer)) {
+    token = nativeToken(networkPassphrase);
+  } else {
+    if (typeof issuer !== "string" || !isAccountAddress(issuer)) throw new InvalidDeploymentError(`token.issuer is not an account address (G…); only XLM has no issuer`);
+    token = issuedToken(code, issuer, networkPassphrase);
+  }
+  if (!isAbsent(json["contractId"]) && json["contractId"] !== token.contractId) {
+    throw new InvalidDeploymentError(`token.contractId is not the SAC of ${token.issuer ? `${token.code}:${token.issuer}` : "native XLM"} on this network, which is ${token.contractId}`);
+  }
+  if (!isAbsent(json["decimals"]) && json["decimals"] !== 7) throw new InvalidDeploymentError("token.decimals must be 7: a SAC has 7");
+  return token;
 }
 
 /**
@@ -133,17 +175,19 @@ function contractId(record: Record<string, unknown>, key: string, where: string)
  *   "network": "stellar:testnet",
  *   "networkPassphrase": "Test SDF Network ; September 2015",
  *   "ledger": 4760307,
- *   "contracts": { "square_job": "C…", "keeper_evaluator": "C…", … },
- *   "usdc": { "issuer": "G…", "contractId": "C…" },
- *   "registries": { "identity": "C…", "reputation": "C…", "validation": "C…" }
+ *   "contracts": { "square_job": "C…" },
+ *   "token": { "code": "XLM", "contractId": "C…" }
  * }
  * ```
  *
- * `contracts` names the crates; `compliance_module`, `groth16_verifier` and
- * `screening_registry` may be absent. Every id is checked to be a strkey of
- * the right kind, the passphrase to be the network's, and on a network whose
- * profile names USDC (testnet), the record's USDC to be that one: the
- * payment token is Circle's, not a test asset (stellar-target.md).
+ * `contracts` names the crates and only `square_job` must be there; `token`
+ * is the asset the kernel was deployed with (`{ "code": "XLM" }`, or a code
+ * with its `issuer`); `usdc { issuer, contractId }` and `registries
+ * { identity, reputation, validation }` are named when the network has them.
+ * Every id is checked to be a strkey of the right kind, the passphrase to be
+ * the network's, every SAC id to be the one its asset derives to, and on a
+ * network whose profile names USDC (testnet), the record's USDC to be that
+ * one: the payment token is Circle's, not a test asset (stellar-target.md).
  */
 export function deploymentFromJson(json: unknown): SquareDeployment {
   if (!isRecord(json)) throw new InvalidDeploymentError("deployment is not an object");
@@ -157,49 +201,63 @@ export function deploymentFromJson(json: unknown): SquareDeployment {
   if (!isRecord(contracts)) throw new InvalidDeploymentError("contracts is missing");
   const out: Record<string, unknown> = { network, networkPassphrase };
   for (const name of SQUARE_CONTRACTS) {
-    if (OPTIONAL_CONTRACTS.has(name) && (contracts[name] === undefined || contracts[name] === null)) continue;
+    if (!REQUIRED_CONTRACTS.has(name) && isAbsent(contracts[name])) continue;
     out[contractFields[name]] = contractId(contracts, name, "contracts");
   }
+  out["token"] = paymentToken(json["token"], networkPassphrase);
   const usdc = json["usdc"];
-  if (!isRecord(usdc)) throw new InvalidDeploymentError("usdc is missing");
-  const issuer = usdc["issuer"];
-  if (typeof issuer !== "string" || !isAccountAddress(issuer)) throw new InvalidDeploymentError("usdc.issuer is not an account address (G…)");
-  const derived = usdcAsset(issuer, networkPassphrase);
-  if (typeof usdc["contractId"] !== "string") throw new InvalidDeploymentError("usdc.contractId is missing");
-  if (usdc["contractId"] !== derived.contractId) {
-    throw new InvalidDeploymentError(`usdc.contractId is not the SAC of USDC:${issuer} on ${network}, which is ${derived.contractId}`);
+  if (!isAbsent(usdc)) {
+    if (!isRecord(usdc)) throw new InvalidDeploymentError("usdc is not an object");
+    const issuer = usdc["issuer"];
+    if (typeof issuer !== "string" || !isAccountAddress(issuer)) throw new InvalidDeploymentError("usdc.issuer is not an account address (G…)");
+    const derived = usdcAsset(issuer, networkPassphrase);
+    if (typeof usdc["contractId"] !== "string") throw new InvalidDeploymentError("usdc.contractId is missing");
+    if (usdc["contractId"] !== derived.contractId) {
+      throw new InvalidDeploymentError(`usdc.contractId is not the SAC of USDC:${issuer} on ${network}, which is ${derived.contractId}`);
+    }
+    if (!isAbsent(usdc["decimals"]) && usdc["decimals"] !== 7) throw new InvalidDeploymentError("usdc.decimals must be 7: a SAC has 7");
+    const profile = networks[network];
+    if (profile?.usdc && profile.usdc.issuer !== issuer) {
+      throw new InvalidDeploymentError(`usdc.issuer is ${issuer}; on ${network} USDC is issued by ${profile.usdc.issuer}`);
+    }
+    out["usdc"] = derived;
   }
-  if (usdc["decimals"] !== undefined && usdc["decimals"] !== 7) throw new InvalidDeploymentError("usdc.decimals must be 7: a SAC has 7");
-  const profile = networks[network];
-  if (profile?.usdc && profile.usdc.issuer !== issuer) {
-    throw new InvalidDeploymentError(`usdc.issuer is ${issuer}; on ${network} USDC is issued by ${profile.usdc.issuer}`);
-  }
-  out["usdc"] = derived;
   const registries = json["registries"];
-  if (!isRecord(registries)) throw new InvalidDeploymentError("registries is missing");
-  for (const name of AGENT_REGISTRIES) out[registryFields[name]] = contractId(registries, name, "registries");
+  if (!isAbsent(registries)) {
+    if (!isRecord(registries)) throw new InvalidDeploymentError("registries is not an object");
+    for (const name of AGENT_REGISTRIES) {
+      if (isAbsent(registries[name])) continue;
+      out[registryFields[name]] = contractId(registries, name, "registries");
+    }
+  }
   const ledger = json["ledger"];
-  if (ledger !== undefined && ledger !== null) {
+  if (!isAbsent(ledger)) {
     if (typeof ledger !== "number" || !Number.isInteger(ledger) || ledger < 0) throw new InvalidDeploymentError("ledger is not a ledger sequence");
     out["deployLedger"] = ledger;
   }
   return out as unknown as SquareDeployment;
 }
 
-/** Every contract the record names, with its crate name; the payment token as `usdc`. */
-export function contractsOf(deployment: SquareDeployment): ReadonlyMap<string, SquareContractName | "usdc"> {
-  const byId = new Map<string, SquareContractName | "usdc">();
+/**
+ * Every contract the record names, with its crate name; the payment token as
+ * `token`, and USDC as `usdc` when the record names it and it is not the
+ * token.
+ */
+export function contractsOf(deployment: SquareDeployment): ReadonlyMap<string, SquareContractName | TokenName> {
+  const byId = new Map<string, SquareContractName | TokenName>();
   for (const name of SQUARE_CONTRACTS) {
     const id = deployment[contractFields[name]];
     if (typeof id === "string") byId.set(id, name);
   }
-  byId.set(deployment.usdc.contractId, "usdc");
+  if (deployment.usdc) byId.set(deployment.usdc.contractId, "usdc");
+  byId.set(deployment.token.contractId, "token");
   return byId;
 }
 
 /** The id the record holds for a contract, or undefined when it names none. */
-export function contractIdOf(deployment: SquareDeployment, name: SquareContractName | "usdc"): string | undefined {
-  if (name === "usdc") return deployment.usdc.contractId;
+export function contractIdOf(deployment: SquareDeployment, name: SquareContractName | TokenName): string | undefined {
+  if (name === "token") return deployment.token.contractId;
+  if (name === "usdc") return deployment.usdc?.contractId;
   const id = deployment[contractFields[name]];
   return typeof id === "string" ? id : undefined;
 }

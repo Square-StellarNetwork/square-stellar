@@ -73,6 +73,40 @@ export function usdcAsset(issuer: string, networkPassphrase: string): UsdcAsset 
   return { code: "USDC", issuer, contractId: new Asset("USDC", issuer).contractId(networkPassphrase), decimals: 7 };
 }
 
+/**
+ * The token a deployment's jobs are paid in, as a Stellar Asset Contract:
+ * native XLM (the MVP on testnet, docs/decisions/auth-and-token-flow.md's
+ * measurements were made against its SAC), or an issued asset such as USDC.
+ * Every SAC has 7 decimals: `usdcUnits`, `formatXlm` and `formatUnits`
+ * convert either.
+ */
+export interface PaymentToken {
+  /** The asset code: `XLM` for the native asset. */
+  code: string;
+  /** The issuing account, `G…`; undefined for the native asset. */
+  issuer: string | undefined;
+  /** The SAC, `C…`, derived from the asset and the network passphrase. */
+  contractId: string;
+  decimals: 7;
+  /** True for XLM: no trustline exists or is needed, every account can hold it. */
+  native: boolean;
+}
+
+/** The native asset's SAC on a network; on testnet the one `stellar contract id asset --asset native` prints. */
+export function nativeToken(networkPassphrase: string): PaymentToken {
+  return { code: "XLM", issuer: undefined, contractId: Asset.native().contractId(networkPassphrase), decimals: 7, native: true };
+}
+
+/** An issued asset's SAC on a network. */
+export function issuedToken(code: string, issuer: string, networkPassphrase: string): PaymentToken {
+  return { code, issuer, contractId: new Asset(code, issuer).contractId(networkPassphrase), decimals: 7, native: false };
+}
+
+/** The `Asset` a payment token is, for the SDK calls that take one (`getSACBalance`, trustline keys). */
+export function assetOf(token: PaymentToken): Asset {
+  return token.native || token.issuer === undefined ? Asset.native() : new Asset(token.code, token.issuer);
+}
+
 const testnet: StellarNetworkProfile = {
   id: "stellar:testnet",
   networkPassphrase: STELLAR_TESTNET_PASSPHRASE,

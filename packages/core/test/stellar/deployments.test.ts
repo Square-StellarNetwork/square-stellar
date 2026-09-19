@@ -11,6 +11,7 @@ import {
   deploymentFromJson,
   deployments,
   InvalidDeploymentError,
+  nativeToken,
   SQUARE_CONTRACTS,
   UnknownDeploymentError,
   type StellarNetworkId,
@@ -25,18 +26,41 @@ function contractIdFor(index: number): string {
 
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+const XLM = nativeToken(Networks.TESTNET);
 
-const record = {
+/** The MVP record: the kernel, paid in XLM. */
+const mvp = {
   network: "stellar:testnet",
   networkPassphrase: Networks.TESTNET,
   ledger: 4760307,
+  contracts: { square_job: ids.square_job },
+  token: { code: "XLM", contractId: XLM.contractId },
+};
+
+/** The full record: every contract, USDC as the token, the registries. */
+const record = {
+  ...mvp,
   contracts: { ...ids },
+  token: { code: "USDC", issuer: USDC_ISSUER, contractId: USDC_SAC, decimals: 7 },
   usdc: { issuer: USDC_ISSUER, contractId: USDC_SAC, decimals: 7 },
   registries: { identity: contractIdFor(20), reputation: contractIdFor(21), validation: contractIdFor(22) },
 };
 
 describe("deploymentFromJson", () => {
-  it("reads a record into the deployment shape", () => {
+  it("reads the MVP record: the kernel and native XLM, nothing else required", () => {
+    expect(deploymentFromJson(mvp)).toEqual({
+      network: "stellar:testnet",
+      networkPassphrase: Networks.TESTNET,
+      squareJob: ids.square_job,
+      token: { code: "XLM", issuer: undefined, contractId: XLM.contractId, decimals: 7, native: true },
+      deployLedger: 4760307,
+    });
+    expect(XLM.contractId).toBe(Asset.native().contractId(Networks.TESTNET));
+    // The token's id may be left for the reader to derive.
+    expect(deploymentFromJson({ ...mvp, token: { code: "XLM" } }).token).toEqual(XLM);
+  });
+
+  it("reads a full record into the deployment shape", () => {
     const deployment = deploymentFromJson(record);
     expect(deployment).toEqual({
       network: "stellar:testnet",
@@ -50,6 +74,7 @@ describe("deploymentFromJson", () => {
       complianceModule: ids.compliance_module,
       screeningRegistry: ids.screening_registry,
       groth16Verifier: ids.groth16_verifier,
+      token: { code: "USDC", issuer: USDC_ISSUER, contractId: USDC_SAC, decimals: 7, native: false },
       usdc: { code: "USDC", issuer: USDC_ISSUER, contractId: USDC_SAC, decimals: 7 },
       identityRegistry: record.registries.identity,
       reputationRegistry: record.registries.reputation,
@@ -58,26 +83,35 @@ describe("deploymentFromJson", () => {
     });
   });
 
-  it("lets the compliance slot, its verifier and the screening registry be absent", () => {
-    const { compliance_module: _m, groth16_verifier: _v, screening_registry: _s, ...required } = ids;
-    const deployment = deploymentFromJson({ ...record, contracts: required, ledger: undefined });
+  it("lets any contract but the kernel, USDC and the registries be absent", () => {
+    const { compliance_module: _m, groth16_verifier: _v, screening_registry: _s, ...rest } = ids;
+    const deployment = deploymentFromJson({ ...record, contracts: rest, ledger: undefined, usdc: undefined, registries: { identity: record.registries.identity } });
     expect(deployment.complianceModule).toBeUndefined();
     expect(deployment.groth16Verifier).toBeUndefined();
     expect(deployment.screeningRegistry).toBeUndefined();
     expect(deployment.deployLedger).toBeUndefined();
+    expect(deployment.usdc).toBeUndefined();
+    expect(deployment.reputationRegistry).toBeUndefined();
+    expect(deployment.identityRegistry).toBe(record.registries.identity);
     expect(contractIdOf(deployment, "compliance_module")).toBeUndefined();
+    expect(contractIdOf(deployment, "usdc")).toBeUndefined();
   });
 
   it.each([
-    ["a missing kernel", { ...record, contracts: { ...ids, square_job: undefined } }, /contracts\.square_job/],
+    ["a missing kernel", { ...mvp, contracts: {} }, /contracts\.square_job/],
     ["an account where a contract id belongs", { ...record, contracts: { ...ids, square_hook: USDC_ISSUER } }, /contracts\.square_hook/],
-    ["a network it does not know", { ...record, network: "eip155:5042002" }, /network/],
-    ["a passphrase that is not the network's", { ...record, networkPassphrase: Networks.PUBLIC }, /networkPassphrase/],
+    ["a network it does not know", { ...mvp, network: "eip155:5042002" }, /network/],
+    ["a passphrase that is not the network's", { ...mvp, networkPassphrase: Networks.PUBLIC }, /networkPassphrase/],
+    ["a missing token", { ...mvp, token: undefined }, /token is missing/],
+    ["a token id that is not the asset's SAC", { ...mvp, token: { code: "XLM", contractId: USDC_SAC } }, /token\.contractId/],
+    ["an issued token without its issuer", { ...mvp, token: { code: "USDC" } }, /token\.issuer/],
+    ["an issued token whose id is another asset's", { ...mvp, token: { code: "USDC", issuer: USDC_ISSUER, contractId: XLM.contractId } }, /token\.contractId/],
+    ["a token code that is not one", { ...mvp, token: { code: "not an asset code" } }, /token\.code/],
     ["a USDC id that is not the issuer's SAC", { ...record, usdc: { issuer: USDC_ISSUER, contractId: ids.square_job } }, /usdc\.contractId/],
     ["another issuer on testnet, where USDC is Circle's", { ...record, usdc: { issuer: Keypair.random().publicKey(), contractId: USDC_SAC } }, /usdc/],
     ["six decimals", { ...record, usdc: { ...record.usdc, decimals: 6 } }, /decimals/],
-    ["a missing registry", { ...record, registries: { identity: record.registries.identity } }, /registries\.reputation/],
-    ["a ledger that is not a sequence", { ...record, ledger: -1 }, /ledger/],
+    ["a registry that is not a contract", { ...record, registries: { identity: USDC_ISSUER } }, /registries\.identity/],
+    ["a ledger that is not a sequence", { ...mvp, ledger: -1 }, /ledger/],
     ["not an object", "stellar:testnet", /not an object/],
   ])("refuses %s", (_what, json, message) => {
     expect(() => deploymentFromJson(json)).toThrow(InvalidDeploymentError);
@@ -90,20 +124,29 @@ describe("deploymentFromJson", () => {
       ...record,
       network: "stellar:local",
       networkPassphrase: Networks.STANDALONE,
+      token: { code: "XLM", contractId: Asset.native().contractId(Networks.STANDALONE) },
       usdc: { issuer, contractId: new Asset("USDC", issuer).contractId(Networks.STANDALONE) },
     });
     expect(local.network).toBe("stellar:local");
-    expect(local.usdc.issuer).toBe(issuer);
+    expect(local.usdc?.issuer).toBe(issuer);
+    expect(local.token.native).toBe(true);
   });
 
   it("names every contract by id, the payment token among them", () => {
     const deployment = deploymentFromJson(record);
     const byId = contractsOf(deployment);
+    // USDC is the token here, so its one id is named `token`.
     expect(byId.size).toBe(SQUARE_CONTRACTS.length + 1);
     expect(byId.get(ids.square_job)).toBe("square_job");
-    expect(byId.get(USDC_SAC)).toBe("usdc");
+    expect(byId.get(USDC_SAC)).toBe("token");
+    expect(contractIdOf(deployment, "token")).toBe(USDC_SAC);
     expect(contractIdOf(deployment, "usdc")).toBe(USDC_SAC);
     expect(contractIdOf(deployment, "keeper_evaluator")).toBe(ids.keeper_evaluator);
+
+    const xlm = deploymentFromJson({ ...record, token: mvp.token });
+    expect(contractsOf(xlm).get(XLM.contractId)).toBe("token");
+    expect(contractsOf(xlm).get(USDC_SAC)).toBe("usdc");
+    expect(contractsOf(deploymentFromJson(mvp)).size).toBe(2);
   });
 });
 

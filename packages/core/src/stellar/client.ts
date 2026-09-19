@@ -1,8 +1,8 @@
 import { Asset, BASE_FEE, Keypair, nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
-import { AssembledTransaction, type ClientOptions } from "@stellar/stellar-sdk/contract";
+import { AssembledTransaction, Err, Ok, type ClientOptions } from "@stellar/stellar-sdk/contract";
 import { Api, Server } from "@stellar/stellar-sdk/rpc";
-import { addressKind } from "./address.js";
-import { contractIdOf, contractsOf, type SquareContractName, type SquareDeployment } from "./deployments.js";
+import { addressKind, assertStellarAddress } from "./address.js";
+import { contractIdOf, contractsOf, type SquareContractName, type SquareDeployment, type TokenName } from "./deployments.js";
 import {
   ArchivedStateError,
   decodeContractError,
@@ -19,11 +19,13 @@ import {
   type ContractErrorTable,
 } from "./errors.js";
 import { decodeSquareEvents, type SquareEvent } from "./events.js";
-import { networks, type StellarNetworkProfile } from "./network.js";
+import { deliverableHash, SQUARE_JOB_ERRORS, squareJobSpec, toKernelConfig, toSquareJob, type JobRecord, type KernelConfig, type KernelConfigRecord, type SquareJob } from "./job.js";
+import { assetOf, networks, type StellarNetworkProfile } from "./network.js";
 import { WalletRequiredError, type Signer } from "./signer.js";
+import { assertTokenAmount } from "./usdc.js";
 
-/** The contracts a call can name: one the deployment names, the payment token, or any id. */
-export type ContractRef = SquareContractName | "usdc" | { id: string; name?: string };
+/** The contracts a call can name: one the deployment names, the payment token (`token`, or `usdc` when the record names USDC), or any id. */
+export type ContractRef = SquareContractName | TokenName | { id: string; name?: string };
 
 export interface ContractCall<T = unknown> {
   contract: ContractRef;
@@ -49,13 +51,25 @@ export interface TransactionResult<T = unknown> {
   response: Api.GetSuccessfulTransactionResponse;
 }
 
-/** Where a `G…` account stands with the USDC trustline it needs to hold or receive USDC. */
-export type UsdcTrustline =
+/** Where an address stands with the trustline it needs to hold or receive the payment token. */
+export type Trustline =
+  /** The token is native XLM: every account holds it, no trustline exists. */
+  | { status: "native" }
   /** A contract: it needs no trustline (auth-and-token-flow.md, "Trustlines"). */
   | { status: "contract" }
   /** An account without one: a transfer to it fails with the SAC's `TrustlineMissingError`. */
   | { status: "missing" }
   | { status: "open"; balance: bigint; limit: bigint; authorized: boolean };
+
+/** What `createJob` takes. */
+export interface CreateJobParams {
+  /** The provider's address: the agent to be paid. */
+  provider: string;
+  /** Ledger seconds after which the job can no longer be funded or delivered. */
+  expiredAt: bigint | number;
+  /** At most 256 bytes. */
+  description: string;
+}
 
 export interface SquareClientConfig {
   deployment: SquareDeployment;
@@ -78,9 +92,9 @@ export interface SquareClientConfig {
   /** Whether an `http://` endpoint is accepted. Default: only for a local network. */
   allowHttp?: boolean | undefined;
   /**
-   * Error tables beyond the payment token's: each contract's `Errors` from
-   * its generated bindings, so a simulation failure is named. Filled in as
-   * the bindings gain their methods (#8 onwards).
+   * Error tables beyond the kernel's and the payment token's: each contract's
+   * `Errors` from its generated bindings, so a simulation failure is named.
+   * Filled in as the bindings gain their methods.
    */
   errorTables?: Partial<Record<SquareContractName, ContractErrorTable>> | undefined;
 }
@@ -93,9 +107,10 @@ const DEFAULT_TIMEOUT_SECONDS = 60;
  * nothing is sent. A write that passes simulation is signed, sent and polled
  * until it is in a ledger, and answered with what it returned and emitted.
  *
- * The methods per contract (`createJob`, `fund`, `submit`, …) arrive with the
- * contracts' interfaces (#9 onwards) on top of `read` and `write` here; the
- * payment-token methods are already on, since the SAC's interface is fixed.
+ * The kernel's methods (`createJob`, `fund`, `submit`, `finalize`, …) sit on
+ * top of `read` and `write`, encoded through the generated bindings' spec;
+ * the other contracts' join as their interfaces land. The payment token's
+ * methods read the ledger directly where a simulation would be a detour.
  */
 export class SquareClient {
   readonly deployment: SquareDeployment;
@@ -106,8 +121,8 @@ export class SquareClient {
   readonly fee: string;
   readonly timeoutInSeconds: number;
   private readonly allowHttp: boolean;
-  private readonly names: ReadonlyMap<string, SquareContractName | "usdc">;
-  private readonly errorTables: Partial<Record<SquareContractName | "usdc", ContractErrorTable>>;
+  private readonly names: ReadonlyMap<string, SquareContractName | TokenName>;
+  private readonly errorTables: Partial<Record<SquareContractName | TokenName, ContractErrorTable>>;
 
   constructor(config: SquareClientConfig) {
     this.deployment = config.deployment;
@@ -129,7 +144,7 @@ export class SquareClient {
     this.fee = config.fee ?? BASE_FEE;
     this.timeoutInSeconds = config.timeoutInSeconds ?? DEFAULT_TIMEOUT_SECONDS;
     this.names = contractsOf(this.deployment);
-    this.errorTables = { usdc: SAC_ERRORS, ...config.errorTables };
+    this.errorTables = { token: SAC_ERRORS, usdc: SAC_ERRORS, square_job: SQUARE_JOB_ERRORS, ...config.errorTables };
   }
 
   /** The signer's address; `WalletRequiredError` on a read-only client. */
@@ -189,7 +204,7 @@ export class SquareClient {
   private get errorContext(): ContractErrorContext {
     return {
       nameOf: (contractId) => this.names.get(contractId),
-      tableOf: (name) => this.errorTables[name as SquareContractName | "usdc"],
+      tableOf: (name) => this.errorTables[name as SquareContractName | TokenName],
     };
   }
 
@@ -200,7 +215,7 @@ export class SquareClient {
    */
   clientOptions(contract: ContractRef): ClientOptions {
     const { id, name } = this.resolve(contract);
-    const table = this.errorTables[name as SquareContractName | "usdc"];
+    const table = this.errorTables[name as SquareContractName | TokenName];
     return {
       contractId: id,
       networkPassphrase: this.deployment.networkPassphrase,
@@ -328,26 +343,167 @@ export class SquareClient {
     return decodeSquareEvents(source, this.deployment);
   }
 
-  // ---- USDC -----------------------------------------------------------------
+  // ---- the kernel ------------------------------------------------------------
 
-  get usdcAsset(): Asset {
-    return new Asset(this.deployment.usdc.code, this.deployment.usdc.issuer);
+  private kernelCall<T>(method: string, args: Record<string, unknown>, parse?: (value: xdr.ScVal) => T): ContractCall<T> {
+    return { contract: "square_job", method, args: squareJobSpec.funcArgsToScVals(method, args), ...(parse ? { parse } : {}) };
+  }
+
+  /**
+   * A read through the spec's own decoding, which knows the return type
+   * (`Job`'s option, the enum), and wraps a `Result<T, E>` function's value
+   * in `Ok`: a successful simulation is always the `Ok` side, so it is
+   * unwrapped here.
+   */
+  private kernelRead<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
+    return this.read<T>(
+      this.kernelCall(method, args, (value) => {
+        const native: unknown = squareJobSpec.funcResToNative(method, value);
+        if (native instanceof Ok) return native.unwrap() as T;
+        if (native instanceof Err) throw new Error(`square_job.${method} answered an error through a successful simulation: ${String(native.unwrapErr())}`);
+        return native as T;
+      }),
+    );
+  }
+
+  private kernelWrite<T = void>(method: string, args: Record<string, unknown>, parse?: (value: xdr.ScVal) => T): Promise<TransactionResult<T>> {
+    return this.write<T>(this.kernelCall(method, args, parse ?? (() => undefined as T)));
+  }
+
+  /**
+   * Open a job for `provider`, as the signer (the client). Answers the new
+   * job's id, counted from 1, and the `job_created` event among the events.
+   */
+  async createJob(params: CreateJobParams): Promise<TransactionResult<bigint>> {
+    assertStellarAddress(params.provider);
+    return this.kernelWrite<bigint>(
+      "create_job",
+      { client: this.account, provider: params.provider, expired_at: BigInt(params.expiredAt), description: params.description },
+      (value) => scValToNative(value) as bigint,
+    );
+  }
+
+  /** Set an Open job's budget, as the signer, who must be its client or provider. Base units. */
+  async setBudget(jobId: bigint, amount: bigint): Promise<TransactionResult<void>> {
+    assertTokenAmount(amount);
+    return this.kernelWrite("set_budget", { caller: this.account, job_id: jobId, amount });
+  }
+
+  /**
+   * Escrow the budget, as the signer (the client): one signature covers the
+   * call and the token transfer beneath it. `expectedBudget` is what the
+   * signer agreed to; the kernel refuses if the budget was changed meanwhile.
+   */
+  async fund(jobId: bigint, expectedBudget: bigint): Promise<TransactionResult<void>> {
+    assertTokenAmount(expectedBudget);
+    return this.kernelWrite("fund", { client: this.account, job_id: jobId, expected_budget: expectedBudget });
+  }
+
+  /**
+   * Record the deliverable, as the signer (the provider): its 32-byte hash,
+   * or the content itself, hashed here (`deliverableHash`). Starts the
+   * challenge window; the `submitted` event carries `finalizeAfter`.
+   */
+  async submit(jobId: bigint, deliverable: string | Uint8Array): Promise<TransactionResult<void>> {
+    return this.kernelWrite("submit", { provider: this.account, job_id: jobId, deliverable: Buffer.from(deliverableHash(deliverable)) });
+  }
+
+  /** Settle a Submitted job whose window has passed; anyone may, the signer only pays the fee. */
+  async finalize(jobId: bigint): Promise<TransactionResult<void>> {
+    return this.kernelWrite("finalize", { job_id: jobId });
+  }
+
+  /**
+   * Close a job, as the signer (the client): while Open or Funded at any
+   * time, while Submitted inside the challenge window. An escrowed budget is
+   * credited back to the client, to be withdrawn.
+   */
+  async reject(jobId: bigint, reason: string): Promise<TransactionResult<void>> {
+    return this.kernelWrite("reject", { client: this.account, job_id: jobId, reason });
+  }
+
+  /** Credit a Funded job's budget back to its client once it has expired without a submission; anyone may. */
+  async claimRefund(jobId: bigint): Promise<TransactionResult<void>> {
+    return this.kernelWrite("claim_refund", { job_id: jobId });
+  }
+
+  /**
+   * Pay `amount` of the signer's withdrawable balance out to `to`. An
+   * account receiving an issued asset needs its trustline (`assertReceivable`);
+   * XLM needs none.
+   */
+  async withdrawTo(to: string, amount: bigint): Promise<TransactionResult<void>> {
+    assertStellarAddress(to);
+    assertTokenAmount(amount);
+    return this.kernelWrite("withdraw_to", { account: this.account, to, amount });
+  }
+
+  /** `withdrawTo` the signer itself. */
+  async withdraw(amount: bigint): Promise<TransactionResult<void>> {
+    return this.withdrawTo(this.account, amount);
+  }
+
+  /** A job by id; `SquareContractError` with `InvalidJob` for an id no job has. */
+  async getJob(jobId: bigint): Promise<SquareJob> {
+    return toSquareJob(jobId, await this.kernelRead<JobRecord>("get_job", { job_id: jobId }));
+  }
+
+  /** What `account` (the signer when omitted) may withdraw, in base units. */
+  async withdrawable(account?: string): Promise<bigint> {
+    return this.kernelRead<bigint>("withdrawable", { account: account ?? this.account });
+  }
+
+  /** The id of the last job created; zero before the first. */
+  async jobCounter(): Promise<bigint> {
+    return this.kernelRead<bigint>("job_counter");
+  }
+
+  /** The kernel's settings: the token, the challenge window in seconds, the fee in bps. */
+  async kernelConfig(): Promise<KernelConfig> {
+    return toKernelConfig(await this.kernelRead<KernelConfigRecord>("config"));
+  }
+
+  /** The kernel's owner, who receives the fees. */
+  async kernelOwner(): Promise<string> {
+    return this.kernelRead<string>("owner");
+  }
+
+  /** The kernel's escrowed and withdrawable totals, and the token balance above them. */
+  async kernelTotals(): Promise<{ escrowed: bigint; withdrawable: bigint; unaccounted: bigint }> {
+    const [escrowed, withdrawable, unaccounted] = await Promise.all([
+      this.kernelRead<bigint>("total_escrowed"),
+      this.kernelRead<bigint>("total_withdrawable"),
+      this.kernelRead<bigint>("unaccounted"),
+    ]);
+    return { escrowed, withdrawable, unaccounted };
+  }
+
+  // ---- the payment token -----------------------------------------------------
+
+  /** The payment token as an `Asset`: native XLM, or the issued asset. */
+  get tokenAsset(): Asset {
+    return assetOf(this.deployment.token);
   }
 
   private trustlineKey(account: string): xdr.LedgerKey {
     return xdr.LedgerKey.trustline(
-      new xdr.LedgerKeyTrustLine({ accountId: Keypair.fromPublicKey(account).xdrAccountId(), asset: this.usdcAsset.toTrustLineXDRObject() }),
+      new xdr.LedgerKeyTrustLine({ accountId: Keypair.fromPublicKey(account).xdrAccountId(), asset: this.tokenAsset.toTrustLineXDRObject() }),
     );
   }
 
+  private accountKey(account: string): xdr.LedgerKey {
+    return xdr.LedgerKey.account(new xdr.LedgerKeyAccount({ accountId: Keypair.fromPublicKey(account).xdrAccountId() }));
+  }
+
   /**
-   * Where an address stands with USDC, read from the ledger without a
-   * simulation: a contract needs no trustline; an account needs one before it
-   * can hold or receive USDC, and a missing one is what every USDC transfer
-   * to it would fail on.
+   * Where an address stands with the payment token, read from the ledger
+   * without a simulation: native XLM needs no trustline and neither does a
+   * contract; an account needs one before it can hold or receive an issued
+   * asset, and a missing one is what every transfer to it would fail on.
    */
-  async usdcTrustline(address: string): Promise<UsdcTrustline> {
+  async trustline(address: string): Promise<Trustline> {
     await this.assertNetwork();
+    if (this.deployment.token.native) return { status: "native" };
     if (addressKind(address) === "contract") return { status: "contract" };
     const { entries } = await this.server.getLedgerEntries(this.trustlineKey(address));
     const entry = entries[0];
@@ -361,44 +517,52 @@ export class SquareClient {
     };
   }
 
-  async hasUsdcTrustline(address: string): Promise<boolean> {
-    return (await this.usdcTrustline(address)).status !== "missing";
+  async hasTrustline(address: string): Promise<boolean> {
+    return (await this.trustline(address)).status !== "missing";
   }
 
-  /** Throws `TrustlineMissingError` for an account that could not be paid in USDC. */
-  async assertUsdcReceivable(address: string): Promise<void> {
-    if ((await this.usdcTrustline(address)).status === "missing") {
-      throw new TrustlineMissingError(address, `${this.deployment.usdc.code}:${this.deployment.usdc.issuer}`);
+  /** Throws `TrustlineMissingError` for an account that could not be paid in the token. */
+  async assertReceivable(address: string): Promise<void> {
+    if ((await this.trustline(address)).status === "missing") {
+      throw new TrustlineMissingError(address, `${this.deployment.token.code}:${this.deployment.token.issuer}`);
     }
   }
 
   /**
-   * USDC held, in base units: the trustline's balance for an account, the
-   * SAC's balance entry for a contract. Zero for an account with no
-   * trustline, which `usdcTrustline` tells apart from an empty one.
+   * The payment token held, in base units: an account's XLM balance, or its
+   * trustline's balance for an issued asset (zero with no trustline, which
+   * `trustline` tells apart from an empty one); the SAC's balance entry for
+   * a contract.
    */
-  async usdcBalance(address: string): Promise<bigint> {
+  async tokenBalance(address: string): Promise<bigint> {
     await this.assertNetwork();
     if (addressKind(address) === "contract") {
-      const { balanceEntry } = await this.server.getSACBalance(address, this.usdcAsset, this.deployment.networkPassphrase);
+      const { balanceEntry } = await this.server.getSACBalance(address, this.tokenAsset, this.deployment.networkPassphrase);
       return balanceEntry ? BigInt(balanceEntry.amount) : 0n;
     }
-    const line = await this.usdcTrustline(address);
+    if (this.deployment.token.native) {
+      const { entries } = await this.server.getLedgerEntries(this.accountKey(address));
+      const entry = entries[0];
+      if (!entry || entry.val.switch() !== xdr.LedgerEntryType.account()) return 0n;
+      return BigInt(entry.val.account().balance().toString());
+    }
+    const line = await this.trustline(address);
     return line.status === "open" ? line.balance : 0n;
   }
 
   /**
-   * Open the signer's USDC trustline, through the SAC's own `trust`
-   * (CAP-0073): one simulated, signed invocation under the account's
-   * authorization, rather than a classic operation. Null for a signer that
-   * is a contract, which needs none. The account needs the reserve a
-   * trustline takes, half an XLM (auth-and-token-flow.md, "Account reserves").
+   * Open the signer's trustline to the payment token, through the SAC's own
+   * `trust` (CAP-0073): one simulated, signed invocation under the account's
+   * authorization, rather than a classic operation. Null when none is
+   * needed: for native XLM, or a signer that is a contract. The account
+   * needs the reserve a trustline takes, half an XLM (auth-and-token-flow.md,
+   * "Account reserves").
    */
-  async trustUsdc(): Promise<TransactionResult<void> | null> {
+  async trustToken(): Promise<TransactionResult<void> | null> {
     const signer = this.requireSigner();
-    if (addressKind(signer.address) === "contract") return null;
+    if (this.deployment.token.native || addressKind(signer.address) === "contract") return null;
     return this.write<void>({
-      contract: "usdc",
+      contract: "token",
       method: "trust",
       args: [nativeToScVal(signer.address, { type: "address" })],
       parse: () => undefined,

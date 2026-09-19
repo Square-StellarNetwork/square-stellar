@@ -32,39 +32,60 @@ The addresses come from the deployment record for the chain the clients declare;
 
 Square is moving to Stellar ([docs/decisions/stellar-target.md](../../docs/decisions/stellar-target.md)).
 The Stellar client lives at `@squaresdk/core/stellar` beside the EVM client above while
-the Soroban contracts are written (#8–#19); the contract methods (`createJob`, `fund`,
-`submit`, …) join it as their interfaces land, from the generated bindings in
-`src/bindings`, and the EVM client leaves with them (#23). What is there today is
-everything a call needs that is not a contract's interface: the network, the deployment
-record, the signer, the simulate → sign → send → poll pipeline, error decoding, event
-decoding, amounts, and the USDC Stellar Asset Contract, whose interface is fixed.
+the Soroban contracts are written; the EVM client leaves with them. Today it is the MVP
+(milestone "MVP — testnet"): the kernel's methods over the generated bindings in
+`src/bindings/square_job`, and everything a call needs that is not a contract's
+interface: the network, the deployment record, the signer, the simulate → sign → send →
+poll pipeline, error decoding, event decoding, amounts, and the payment token, native XLM
+on testnet.
 
 ```ts
 import { Keypair } from "@stellar/stellar-sdk";
-import { connectSquareClient, deploymentFor, keypairSigner, usdcUnits } from "@squaresdk/core/stellar";
+import { connectSquareClient, deploymentFromJson, kernelEvent, keypairSigner, usdcUnits } from "@squaresdk/core/stellar";
 
-const deployment = deploymentFor("stellar:testnet"); // or deploymentFromJson(record) until #45 deploys the testnet stack
-const square = await connectSquareClient({
-  deployment,
-  signer: keypairSigner(Keypair.fromSecret(secret), deployment.networkPassphrase),
-});
+const deployment = deploymentFromJson(record); // contracts/deployments/testnet.json, or deploymentFor("stellar:testnet") once it is compiled in
+const client = await connectSquareClient({ deployment, signer: keypairSigner(Keypair.fromSecret(clientSecret), deployment.networkPassphrase) });
+const agent = await connectSquareClient({ deployment, signer: keypairSigner(Keypair.fromSecret(agentSecret), deployment.networkPassphrase) });
 
-if (!(await square.hasUsdcTrustline(square.account))) await square.trustUsdc();
-const balance = await square.usdcBalance(square.account); // base units, 7 decimals
-const budget = usdcUnits("150.00");                        // 1500000000n
+// The client opens the job, the agent prices it, the client escrows the price: one signature, no approve.
+const { result: jobId } = await client.createJob({ provider: agent.account, expiredAt: now + 3600n, description: "summarise the quarterly report" });
+await agent.setBudget(jobId, usdcUnits("2.5")); // base units at 7 decimals: 25000000n stroops
+await client.fund(jobId, usdcUnits("2.5"));     // refused if the budget changed meanwhile (BudgetMismatch)
+
+// The agent delivers; the challenge window runs; then anyone finalizes and the agent pulls its payout.
+const submitted = await agent.submit(jobId, deliverableText); // records sha256(deliverableText)
+const { finalizeAfter } = kernelEvent(submitted.events, "submitted")!;
+// … after finalizeAfter (ledger seconds), unless the client called reject(jobId, reason) inside the window:
+const finalized = await agent.finalize(jobId);
+const { payout, fee } = kernelEvent(finalized.events, "finalized")!;
+await agent.withdraw(payout);
 ```
+
+**The kernel's methods.** `createJob`, `setBudget`, `fund`, `submit`, `finalize`,
+`reject`, `claimRefund`, `withdrawTo` / `withdraw` write; `getJob`, `withdrawable`,
+`jobCounter`, `kernelConfig`, `kernelOwner`, `kernelTotals` read. The signer is the acting
+address (`client`, `provider` or `account` in the contract's signature); `finalize` and
+`claimRefund` name nobody and anyone may crank them. Arguments are encoded and return
+values decoded through the bindings' own spec (`squareJobSpec`), so the SDK holds no copy
+of the contract's interface. `getJob` answers a `SquareJob`: the record with camel-cased
+fields, bigints for `u64`s, and `finalizeAfter` (= `submittedAt + challengeWindow`) worked
+out. `submit` takes the deliverable's content and records its SHA-256, or a 32-byte hash
+as given (`deliverableHash`). The kernel itself is
+[contracts/contracts/square_job/README.md](../../contracts/contracts/square_job/README.md):
+the state machine, who signs what, the error codes, the events.
 
 **Every write is simulated first, and a refusal is the contract's own error, by name.**
 `read` simulates and answers the return value; `write` simulates, signs, sends and polls
 until the transaction is in a ledger, then answers `{ hash, ledger, result, events,
 feeCharged }`. A simulation the host refuses throws before anything is signed:
 `SquareContractError` when a contract raised a `#[contracterror]`, with `code`,
-`errorName` from that contract's error table, `raisedBy` (the contract in the call tree
-that raised it, read off the diagnostic events, so a hook's refusal through the kernel is
-the hook's) and the message the contract logged; `SimulationFailedError` for anything
-else the host refused. A transaction that fails in its ledger throws
-`TransactionFailedError`; one the network refuses at submission `TransactionSendError`;
-one not seen within `timeoutInSeconds` `TransactionPendingError`, with the hash to check.
+`errorName` from that contract's error table (the kernel's `SQUARE_JOB_ERRORS` comes from
+its bindings; the token's is the SAC's), `raisedBy` (the contract in the call tree that
+raised it, read off the diagnostic events, so the SAC's refusal beneath `fund` is the
+token's) and the message the contract logged; `SimulationFailedError` for anything else
+the host refused. A transaction that fails in its ledger throws `TransactionFailedError`;
+one the network refuses at submission `TransactionSendError`; one not seen within
+`timeoutInSeconds` `TransactionPendingError`, with the hash to check.
 
 **`connectSquareClient` asks the endpoint which network it is.** `getNetwork` once,
 compared with the deployment record's passphrase; `DeploymentNetworkMismatchError` with
@@ -79,54 +100,66 @@ an `address` is a `Signer` too, which is how the app (#39) and smart accounts (#
 in; `signAuthEntry` is only exercised when the signer is not the account submitting the
 transaction.
 
-**No approve, and a `G…` account needs a trustline.** `fund` will move USDC inside the
-client's own authorization ([auth-and-token-flow.md](../../docs/decisions/auth-and-token-flow.md)),
-so there is no allowance step anywhere here. An account cannot hold or receive USDC
-without a trustline: `usdcTrustline(address)` reads it off the ledger (`contract`,
-`missing`, or `open` with the balance), `assertUsdcReceivable` throws
-`TrustlineMissingError`, and `trustUsdc()` opens the signer's through the SAC's own
-`trust` (CAP-0073), one signed invocation. `usdcBalance` is the trustline's balance for an
-account and the SAC's entry for a contract.
+**No approve; the token, and trustlines.** `fund` moves the token inside the client's
+own authorization ([auth-and-token-flow.md](../../docs/decisions/auth-and-token-flow.md)),
+so there is no allowance step anywhere here. The deployment's `token` is what the kernel
+was deployed with: native XLM on testnet, which every account holds and needs no
+trustline for; or an issued asset such as USDC, which a `G…` account cannot hold or
+receive without one. `trustline(address)` reads that off the ledger (`native`,
+`contract`, `missing`, or `open` with the balance), `assertReceivable` throws
+`TrustlineMissingError`, `trustToken()` opens the signer's through the SAC's own `trust`
+(CAP-0073), one signed invocation, and answers null when none is needed. `tokenBalance`
+is an account's XLM balance, or its trustline's balance for an issued asset, and the
+SAC's entry for a contract.
 
 **Amounts are base units at 7 decimals, as bigints.** `usdcUnits("1.50")` is
-`15000000n`, `formatUsdc(15000000n)` is `"1.5"`, `assertTokenAmount` refuses what a
-contract refuses at its boundary (negative, or above the `u64` a record holds).
-`addressField(address)` is `f`, the field element the circuit and the compliance module
-compute for an address ([address-field-mapping.md](../../docs/decisions/address-field-mapping.md)).
+`15000000n` (the same 7 decimals for XLM: stroops), `formatUsdc` / `formatXlm` print
+them, `assertTokenAmount` refuses what a contract refuses at its boundary (negative, or
+above the `u64` a record holds). `addressField(address)` is `f`, the field element the
+circuit and the compliance module compute for an address
+([address-field-mapping.md](../../docs/decisions/address-field-mapping.md)).
 
 **The deployment record.** `deploymentFromJson` reads `contracts/deployments/<network>.json`
-as the deploy scripts (#19) write it:
+as the deploy scripts (#19) write it. The MVP record is the kernel and its token:
 
 ```json
 {
   "network": "stellar:testnet",
   "networkPassphrase": "Test SDF Network ; September 2015",
   "ledger": 4760307,
-  "contracts": { "square_job": "C…", "keeper_evaluator": "C…", "arbitration": "C…", "claim_market": "C…", "square_hook": "C…", "policy_registry": "C…", "compliance_module": "C…", "screening_registry": "C…", "groth16_verifier": "C…" },
-  "usdc": { "issuer": "G…", "contractId": "C…" },
-  "registries": { "identity": "C…", "reputation": "C…", "validation": "C…" }
+  "contracts": { "square_job": "C…" },
+  "token": { "code": "XLM", "contractId": "C…" }
 }
 ```
 
-`contracts` names the crates; the compliance module, its verifier and the screening
-registry may be absent. Every id is checked to be a strkey of the right kind, the
-passphrase to be the network's, `usdc.contractId` to be the SAC of `USDC:issuer` on that
-network, and on testnet the issuer to be Circle's. `deploymentFor("stellar:testnet")`
-answers the copy compiled in here once the testnet stack is deployed (#45); a test
-asserts the copy and the file agree. `networkFor("stellar:testnet" | "stellar:local")`,
-or by passphrase, carries the rest: RPC, Horizon, Friendbot, the explorer, and USDC.
+`contracts` names the crates and only `square_job` must be there; the other eight are
+named as they are deployed. `token` is `{ "code": "XLM" }` for the native asset or a
+code with its `issuer`; `contractId` may be given and must then be the SAC that asset
+derives to on that network. `usdc { issuer, contractId }` and `registries { identity,
+reputation, validation }` are named when the network has them, checked the same way, and
+on testnet USDC's issuer must be Circle's. `deploymentFor("stellar:testnet")` answers the
+copy compiled in here once the testnet record exists; a test asserts the copy and the
+file agree. `networkFor("stellar:testnet" | "stellar:local")`, or by passphrase, carries
+the rest: RPC, Horizon, Friendbot, the explorer, and USDC.
 
 **Events.** `decodeSquareEvents(source, deployment)` is the deployment's contract events
 in a `getTransaction` response, a `getEvents` page or raw `xdr.ContractEvent`s, decoded to
-native values with the contract's crate name, placed by ledger and event id (from
-`getEvents`, the indexer's cursor) or by position in the transaction. The typed schema
-per event arrives with `contracts/common` (#8).
+native values with the contract's crate name (the payment token's as `token`), placed by
+ledger and event id (from `getEvents`, the indexer's cursor) or by position in the
+transaction. `kernelEvents(events)` types the kernel's among them (`job_created`,
+`budget_set`, `funded`, `submitted`, `finalized`, `rejected`, `refunded`, `withdrawn`,
+`skimmed`, `ownership_offered`, `ownership_transferred`) and `kernelEvent(events, name)`
+picks one; a kernel event whose shape is not the contract's is `MalformedEventError`,
+since that means the deployment is not the contract the bindings came from.
 
 `npm test` covers this against real testnet answers captured as fixtures
-(`test/stellar/fixtures/`, `capture.mjs` refreshes them); `STELLAR_LIVE=1 npm test`
-also runs `test/stellar/live.test.ts` against testnet itself: the endpoint check, reads
-of the USDC SAC, a decoded refusal, and a real `trust` from an account Friendbot funds
-for the run.
+(`test/stellar/fixtures/`, `capture.mjs` refreshes them) and against return values
+encoded with the bindings' spec; `STELLAR_LIVE=1 npm test` also runs
+`test/stellar/live.test.ts` against testnet itself: the endpoint check, reads of the USDC
+SAC, a decoded refusal, and a real `trust` from an account Friendbot funds for the run.
+With `STELLAR_KERNEL=C…` naming a kernel deployed with native XLM and a short window, it
+runs the whole MVP lifecycle there, from two Friendbot accounts: create, price, fund,
+submit, a refused early finalize, the window, finalize, withdraw.
 
 ## What is worth knowing
 
