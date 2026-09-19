@@ -44,21 +44,29 @@ of someone else's payment.
 
 ### Addresses are one field element
 
-An EVM address is 20 bytes and fits in a BN254 element with room to spare. The
-Solana circuit this was ported from split 32-byte pubkeys into `high`/`low`
-halves because they exceed the field, which is why there used to be ten public
-signals; `recipient_high`/`recipient_low` and `token_mint_high`/`token_mint_low`
-collapse to one signal each.
+`recipient`, `token`, the entries of `token_whitelist` and `blocked_addresses`,
+and `operator_id_field` each hold one field element per address.
 
-The same change removed the Poseidon hashing of address-list entries. It existed
-only to fold two halves into one comparable value; with a single element,
-membership is plain equality. Entries in `token_whitelist` and
-`blocked_addresses` are now raw address field elements, and the policy
-commitment hashes them directly. A commitment produced by the Solana-era backend
-will not match this circuit — expected, since the whole layout changed.
+On Stellar an address is 32 bytes, either a `G…` account key or a `C…` contract
+hash, and does not fit in BN254's field. It enters the circuit as
+`f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31]`: 248 bits, always below
+r. The compliance module computes the same `f` for the payee and the token and
+compares it with signals 2 and 4. The definition, the test vectors and why the
+bytes hashed are the `ScVal` XDR are in
+[docs/decisions/address-field-mapping.md](../docs/decisions/address-field-mapping.md).
 
-Category entries are unaffected: they are strings, 32 bytes does not fit in one
-element, and they stay Poseidon images.
+The constraints do not change. Nothing in `payment.circom` limits the width of
+these signals: they are required to be non-zero and to equal, or not equal,
+list entries. A proof with Stellar addresses therefore comes from this circuit
+and its existing key; the decision record shows two, verified by snarkjs, by
+the Soroban host and on testnet.
+
+History: the Solana version split 32-byte keys into `high`/`low` halves and had
+ten public signals. The Arc version collapsed them to one element each, because
+a 20-byte EVM address fits, and list entries became raw address elements
+instead of Poseidon images. Hashing to a field element keeps the Arc layout, so
+there are still eight public signals. Category entries are strings and stay
+Poseidon images.
 
 ### Amounts are 6-decimal ERC-20 units
 

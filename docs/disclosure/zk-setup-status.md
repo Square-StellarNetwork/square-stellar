@@ -192,6 +192,24 @@ PR, taken from a source comment rather than from the artifact, and it is the
 reason the tool now reads both phases: a provenance claim that cannot be
 checked does not belong on any of these surfaces, including this one.
 
+## The Stellar port
+
+The move to Stellar does not change what the key is:
+
+- **Still a development key.** It stays so on Stellar, and the Soroban
+  verifier ([docs/decisions/groth16-on-soroban.md](../decisions/groth16-on-soroban.md))
+  inherits exactly this status.
+- **The address mapping needs no new phase 2 by itself.** 32-byte Stellar
+  addresses enter the circuit as `f(addr)`
+  ([docs/decisions/address-field-mapping.md](../decisions/address-field-mapping.md)).
+  That changes what signals 2 and 4 mean, not the constraints: proofs about
+  Stellar addresses come from the same circuit and key.
+- **A new phase 2 is needed if [#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20)
+  changes a constraint.**
+- **The ceremony** ([#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51))
+  runs over the circuit as #20 freezes it for Stellar, and its key replaces
+  this one.
+
 ## When this lifts
 
 [#16][i16] — the public ceremony — is the only thing that lifts it.
