@@ -1,0 +1,6 @@
+# Pinned by docs/decisions/stellar-target.md (#1). Upstream soroban-sdk and
+# stellar-cli pin only `stable`, which does not reproduce; this does.
+[toolchain]
+channel = "1.98.1"
+targets = ["wasm32v1-none"]
+components = ["rustfmt", "clippy"]

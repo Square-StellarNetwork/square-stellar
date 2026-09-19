@@ -27,6 +27,8 @@
   ],
   "scripts": {
     "generate:abi": "node scripts/generate-abis.mjs",
+    "generate:bindings": "node scripts/generate-bindings.mjs",
+    "check:bindings": "node scripts/generate-bindings.mjs --check",
     "check:events": "node scripts/check-events-documented.mjs",
     "check:selectors": "node scripts/check-deployed-selectors.mjs",
     "build": "tsc -p tsconfig.build.json",

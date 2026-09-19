@@ -14,6 +14,7 @@ pull request.
 | Check | What a green run means |
 |---|---|
 | `build, test, gas` | The whole Foundry suite, `forge build --sizes`, a gas report on the pull request and a coverage table on the run summary. |
+| `soroban workspace (build, test, bindings, no upgrade)` | The Soroban workspace in `contracts/` ([#7](https://github.com/Square-StellarNetwork/square-stellar/issues/7)): `cargo test --locked` over every crate, `stellar contract build` with the Wasm sizes on the run summary, no contract that can replace its own code ([upgradeability-and-governance.md](decisions/upgradeability-and-governance.md)), the probe vectors match their generators, and the committed TypeScript bindings match the contracts. **Not required**, see below. |
 | `@squaresdk/core against anvil` | The SDK drives all five settlement paths against a locally deployed stack, and the committed ABI modules match a fresh `forge build` and document every event they declare. |
 | `circuits` | `payment.circom` compiles, a proving key builds, and the whole constraint suite runs against them. The ceremony's pinned drand quicknet chain hash and group key are checked against `api.drand.sh` itself. How many tests passed is on the run summary, not in this table: a count written by hand here drifts the moment a test is added. |
 | `prover (real proving key)` | The prover agrees with the circuit, and its Solidity calldata matches `snarkjs`. |
@@ -36,14 +37,15 @@ pull request.
 | `pack and install (dry run)` | The thirteen `@squaresdk` packages build in dependency order and pack, each tarball carries its `dist/`, its bins, its README and the license and nothing outside `files`, none says `file:` for a sibling, and all thirteen install together into an empty project where every library imports and the four binaries answer ([docs/decisions/distribution-channel.md](decisions/distribution-channel.md)). On a `v<version>` tag the same workflow goes on to publish. **Not required**, see below. |
 | `secret scan`, `forbidden strings` | No secrets, and no disclosure wording has gone missing. A red `secret scan` names the rule, the file and the line in the job log: gitleaks runs with `--verbose`, and with `--redact` beside it the value itself is never printed. It walks the git history, so the finding can sit in a commit the diff no longer shows. |
 
-Seven are **not** required to merge. Two of them are not required because their
+Eight are **not** required to merge. Two of them are not required because their
 red can be a statement about an outside service rather than about the change —
 the RPC `packages/aa (anvil)` forks from, or TRM's sanctions API answering — and
 an outside service having a bad afternoon should not block unrelated work. The
 other five, `refuse and replay`, `six refusal scenarios (policy → proof → anvil)`,
 `did-aip-driver version`, `services/screener (anvil)` and
 `pack and install (dry run)`, reach no network and are not required only
-because they are new.
+because they are new. The eighth, `soroban workspace`, reaches no network either
+and is new.
 
 | Check | Why it is not required |
 |---|---|
@@ -54,6 +56,7 @@ because they are new.
 | `services/screener (anvil)` | New. Like the rest of its matrix it reaches nothing but the anvil the job starts; the live tests against TRM are skipped here by design and run in the row below. Promote it the same way. |
 | `pack and install (dry run)` | New, and hermetic apart from the registry fetch of the packages' own dependencies: thirteen builds, thirteen packs, one install of the tarballs. Its red means a package would ship broken. Promote it the same way once it has run a while. |
 | `sanctions screening (TRM → anvil)` | #35's screener against TRM's real sanctions API, and the end-to-end run with OFAC-listed addresses against the real hook. TRM's keyless tier allows 100 requests a day and a run makes about ten, so a red can mean TRM did not answer. Lives in its own path-filtered workflow (`sanctions-screening.yml`). |
+| `soroban workspace (build, test, bindings, no upgrade)` | New, and hermetic apart from the crates.io and npm fetches. Promote it once it has run without flaking; it takes over from the Foundry jobs as the B-cluster contracts land ([docs/upstream/foundry-to-soroban.md](upstream/foundry-to-soroban.md)). |
 
 `circuits` depends on drand, and is required anyway (square#260). Its
 step `The drand pin, against the live chain` sends two free GETs to
@@ -198,6 +201,8 @@ Square's own storage.
 |---|---|---|
 | `circom` | `v2.2.3` | The compiler decides what the constraint tests are testing. Installed from the iden3 release and checked against sha256 `85342c7f…fe53a3` — see [.github/actions/circom](../.github/actions/circom/action.yml). |
 | Node | `22` | Matches the rest of the workflows. |
+| Rust | `1.98.1`, target `wasm32v1-none` | [contracts/rust-toolchain.toml](../contracts/rust-toolchain.toml); the `soroban` job reads the channel from that file ([stellar-target.md](decisions/stellar-target.md)). |
+| `stellar-cli` | `27.1.0` | Builds the Soroban Wasm and generates the bindings. Installed from the release tarball and checked against sha256 `9915fe63…a266af94`, whose build provenance verifies against stellar/stellar-cli's `binaries.yml` at the tag — see [.github/actions/stellar-cli](../.github/actions/stellar-cli/action.yml). `make build-contracts` and `generate-bindings.mjs` read the version from that file. |
 | `solc` | `0.8.28` | Already pinned in [foundry.toml](../contracts/foundry.toml) with the optimizer settings, so bytecode is reproducible. |
 | `gitleaks` | `v8.28.0` | The binary that decides whether a secret is in the tree. Downloaded from the gitleaks release and checked against sha256 `a65b5253…a840eb` from the release's checksums file before it is extracted; see [security.yml](../.github/workflows/security.yml). |
 

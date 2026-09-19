@@ -1,0 +1,43 @@
+# The Soroban contracts (#7). Versions are the ones docs/decisions/stellar-target.md
+# locks for Protocol 27; `Cargo.lock` is committed so a build is reproducible.
+#
+# contracts/<name>  one crate per deployed contract, built to wasm32v1-none
+# common            types, errors, events and storage helpers they share (#8)
+# test-support      mocks for tests only: token, 8004 registries, hostile hooks
+# probes/<name>     measurements behind the A-cluster decision records; not deployed.
+#                   probes/ also holds their Node scripts, so members are listed by name.
+[workspace]
+resolver = "2"
+members = [
+    "contracts/*",
+    "common",
+    "test-support",
+    "probes/address_field_probe",
+    "probes/auth_probe",
+    "probes/call_graph_probe",
+    "probes/groth16_probe",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+rust-version = "1.91.0"
+
+[workspace.dependencies]
+soroban-sdk = "=27.0.6"
+square-common = { path = "common" }
+square-test-support = { path = "test-support" }
+
+# The profile Soroban's own examples ship with: smallest code, no panics that
+# unwind, one codegen unit and LTO so the same source gives the same bytes.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

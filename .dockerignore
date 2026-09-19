@@ -8,6 +8,7 @@ circuits/build
 contracts/out
 contracts/cache
 contracts/broadcast
+contracts/target
 app/.next
 app/out
 services/prover/artifacts/*.wasm
