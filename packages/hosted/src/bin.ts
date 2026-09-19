@@ -9,13 +9,16 @@ import {
   networkFor,
   type SquareDeployment,
 } from "@squaresdk/core";
+import { deploymentFromJson as stellarDeploymentFromJson, isStellarNetworkId, keypairSigner, networks as stellarNetworks, type SquareDeployment as StellarDeployment } from "@squaresdk/core/stellar";
 import { describeDutyEvent, parsePolicy } from "@squaresdk/policy";
 import { createLocalProver, fileDutyState, type LocalProver } from "@squaresdk/policy/node";
+import { Keypair } from "@stellar/stellar-sdk";
 import { createPublicClient, createWalletClient, defineChain, http, type Chain, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parseHostedConfig, type HostedAgentConfig } from "./config.js";
 import { hostAgent, sealContext, type ComplianceDeps } from "./host.js";
 import { deriveSealKey, seal } from "./sealed.js";
+import { hostStellarAgent } from "./stellar.js";
 
 /**
  * `square-hosted <config.json>`: run the agent the configuration describes.
@@ -23,10 +26,23 @@ import { deriveSealKey, seal } from "./sealed.js";
  * SQUARE_HOSTED_CONFIG, for a host that has variables and no files to mount
  * (docs/deploy/railway.md); the policy and state files of a compliance block
  * are then relative to the working directory.
- * `square-hosted seal <agentId>`: seal an institution's API key, read from
- * stdin, for that agent's configuration.
+ * `square-hosted seal <agentId|name>`: seal an institution's API key, read
+ * from stdin, for that agent's configuration (its ERC-8004 id, or on Stellar
+ * its name).
  *
- *   SQUARE_PRIVATE_KEY       the wallet that owns the config's agentId (required to run)
+ * On Stellar (the MVP: `SQUARE_NETWORK=stellar:testnet` or `stellar:local`)
+ * the host runs the configuration through `@squaresdk/agent/stellar`: it
+ * watches the kernel for jobs created for its key, runs each capability's
+ * instructions through the model on the job's description, submits,
+ * finalizes and withdraws. No tools, delegation or compliance there yet.
+ *
+ *   SQUARE_NETWORK           stellar:testnet | stellar:local for the Stellar host; unset for an EVM chain
+ *   SQUARE_SECRET_KEY        the Stellar key (S…) jobs are created for (required on Stellar)
+ *   SQUARE_STATE_FILE        where the Stellar host keeps the jobs it has seen across restarts; <config>.provider.json
+ *   SQUARE_START_LEDGER      the ledger the Stellar host starts looking for jobs from; the latest when unset
+ *   SQUARE_POLL_MS           how often it looks; 10000
+ *
+ *   SQUARE_PRIVATE_KEY       the wallet that owns the config's agentId (required to run on an EVM chain)
  *   SQUARE_HOSTED_CONFIG     the configuration itself, as JSON, when no path is given
  *   SQUARE_CHAIN_ID          5042002 (Arc Testnet) by default; 31337 for anvil
  *   SQUARE_RPC_URL           the chain's endpoint; defaults to the network profile's
@@ -80,24 +96,79 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-async function sealCommand(agentId: string | undefined): Promise<void> {
-  if (agentId === undefined || !/^\d+$/.test(agentId)) throw new Error("usage: square-hosted seal <agentId>  (the key on stdin)");
+async function sealCommand(who: string | undefined): Promise<void> {
+  if (who === undefined || who === "") throw new Error("usage: square-hosted seal <agentId|name>  (the key on stdin)");
   const secret = env("SQUARE_SEAL_SECRET");
   if (secret === undefined) throw new Error("set SQUARE_SEAL_SECRET to seal a key");
   const key = await readStdin();
   if (key === "") throw new Error("nothing on stdin to seal");
-  process.stdout.write(seal(key, deriveSealKey(secret), sealContext({ agentId })) + "\n");
+  const context = /^\d+$/.test(who) ? sealContext({ agentId: who }) : sealContext({ name: who });
+  process.stdout.write(seal(key, deriveSealKey(secret), context) + "\n");
+}
+
+function stellarDeploymentOf(network: string): StellarDeployment {
+  const file = env("SQUARE_DEPLOYMENT_FILE");
+  if (file === undefined) throw new Error(`SQUARE_DEPLOYMENT_FILE is required on ${network}: the contracts/deployments/<network>.json the deploy script wrote`);
+  const deployment = stellarDeploymentFromJson(JSON.parse(readFileSync(file, "utf8")));
+  if (deployment.network !== network) throw new Error(`SQUARE_DEPLOYMENT_FILE ${file} is for ${deployment.network}, SQUARE_NETWORK is ${network}`);
+  return deployment;
+}
+
+async function runStellar(network: string, config: HostedAgentConfig, files: { dir: string; stateDefault: string }): Promise<void> {
+  if (!isStellarNetworkId(network)) throw new Error(`SQUARE_NETWORK ${network} is not a Stellar network id (stellar:testnet, stellar:local)`);
+  const deployment = stellarDeploymentOf(network);
+  const secret = env("SQUARE_SECRET_KEY");
+  if (secret === undefined) throw new Error("SQUARE_SECRET_KEY is the Stellar key jobs are created for; it is required");
+  const rpcUrl = env("SQUARE_RPC_URL") ?? stellarNetworks[network]?.rpcUrl;
+  if (rpcUrl === undefined) throw new Error(`no RPC endpoint is known for ${network}; set SQUARE_RPC_URL`);
+  const startLedger = env("SQUARE_START_LEDGER");
+  const pollMs = env("SQUARE_POLL_MS");
+  const hosted = hostStellarAgent(config, {
+    deployment,
+    signer: keypairSigner(Keypair.fromSecret(secret), deployment.networkPassphrase),
+    rpcUrl,
+    sealSecret: env("SQUARE_SEAL_SECRET"),
+    stateFile: env("SQUARE_STATE_FILE") ?? files.stateDefault,
+    startLedger: startLedger !== undefined ? Number(startLedger) : undefined,
+    pollMs: pollMs !== undefined ? Number(pollMs) : undefined,
+    onRun: ({ jobId, capability, outcome }) => console.error(`[square-hosted] ${capability} job ${jobId}: ${outcome.turns} turn(s), ${outcome.usage.inputTokens}/${outcome.usage.outputTokens} tokens`),
+    onEvent: (event) => {
+      const job = "jobId" in event && event.jobId !== undefined ? ` job ${event.jobId}` : "";
+      const detail = event.type === "error" ? ` ${event.step}: ${event.error instanceof Error ? event.error.message : String(event.error)}` : event.type === "unserviceable" ? `: ${event.reason}` : "";
+      console.error(`[square-hosted] ${event.type}${job}${detail}`);
+    },
+  });
+  await hosted.agent.client!.assertNetwork();
+  const port = Number(env("PORT") ?? 3000);
+  const listening = await hosted.agent.listen(port, env("HOST") ?? "0.0.0.0");
+  console.error(
+    `[square-hosted] ${config.name} (${hosted.agent.account}) on ${network}, kernel ${deployment.squareJob}, listening at ${listening.url}: ` +
+      `${config.capabilities.map((c) => c.id).join(", ")}; ${config.provider.tier} key`,
+  );
+  const stop = async () => {
+    await listening.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", () => void stop());
+  process.once("SIGTERM", () => void stop());
 }
 
 async function runCommand(path: string | undefined): Promise<void> {
   const inline = env("SQUARE_HOSTED_CONFIG");
   if (path === undefined && inline === undefined) {
-    throw new Error("usage: square-hosted <config.json> | square-hosted seal <agentId>; or the configuration as JSON in SQUARE_HOSTED_CONFIG");
+    throw new Error("usage: square-hosted <config.json> | square-hosted seal <agentId|name>; or the configuration as JSON in SQUARE_HOSTED_CONFIG");
   }
   const config = parseHostedConfig(JSON.parse(path !== undefined ? readFileSync(path, "utf8") : (inline as string)));
   // Where a compliance block's policy and state files are: beside the
   // configuration file, or in the working directory for one from the environment.
   const files = path !== undefined ? { dir: dirname(path), stateDefault: `${path}.duty.json` } : { dir: process.cwd(), stateDefault: resolve(process.cwd(), "square-hosted.duty.json") };
+
+  const network = env("SQUARE_NETWORK");
+  if (network !== undefined && network.startsWith("stellar:")) {
+    const stateDefault = path !== undefined ? `${path}.provider.json` : resolve(process.cwd(), "square-hosted.provider.json");
+    await runStellar(network, config, { dir: files.dir, stateDefault });
+    return;
+  }
 
   const chainId = Number(env("SQUARE_CHAIN_ID") ?? ARC_TESTNET_CHAIN_ID);
   if (!Number.isInteger(chainId) || chainId <= 0) throw new Error(`SQUARE_CHAIN_ID must be a positive integer, got ${env("SQUARE_CHAIN_ID")}`);

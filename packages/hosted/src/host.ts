@@ -99,6 +99,7 @@ export interface HostedAgent {
  * card or the wire.
  */
 export async function hostAgent(config: HostedAgentConfig, deps: HostDeps): Promise<HostedAgent> {
+  if (config.agentId === undefined) throw new Error(`${config.name}: agentId, the ERC-8004 id the wallet owns, is required on an EVM chain`);
   const model = modelClientFor(config, deps);
   const modelName = config.provider.model ?? DEFAULT_MODEL;
   const agent = createAgent({
@@ -280,9 +281,11 @@ function modelClientFor(config: HostedAgentConfig, deps: HostDeps): ModelClient 
   return apiKey === undefined ? new Anthropic() : new Anthropic({ apiKey });
 }
 
-/** What an own key is sealed for: this agent, and no other configuration. */
-export function sealContext(config: Pick<HostedAgentConfig, "agentId">): string {
-  return `hosted-agent:${config.agentId}`;
+/** What an own key is sealed for: this agent, and no other configuration: its ERC-8004 id, or on Stellar (no registry yet) its name. */
+export function sealContext(config: { agentId?: string | undefined; name?: string | undefined }): string {
+  const who = config.agentId ?? config.name;
+  if (who === undefined) throw new Error("a seal context needs the agent's id or name");
+  return `hosted-agent:${who}`;
 }
 
 function resolverFor(deps: HostDeps, agent: Agent): DidResolverLike {

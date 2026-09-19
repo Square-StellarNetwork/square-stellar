@@ -307,3 +307,48 @@ describe("toSquareJob", () => {
     expect(typeof job.budget).toBe("bigint");
   });
 });
+
+describe("getEvents", () => {
+  it("asks the endpoint for the kernel's events with typed topic filters and answers a decoded page", async () => {
+    // The captured page holds the XLM SAC's transfer of the fund transaction; naming XLM as the token keeps it.
+    mock.on("getEvents", () => fixture("getEvents.fund-transfer.json"));
+    const page = await square(false).getEvents({
+      topics: [[{ symbol: "job_created" }, "*", "*", { address: clientKey.publicKey() }], [{ symbol: "funded" }, { u64: 7n }]],
+      startLedger: 4_760_000,
+      limit: 50,
+    });
+    expect(page.cursor).toBe("0020445418718494719-4294967295");
+    expect(page.latestLedger).toBe(4_761_085);
+    expect(page.latestLedgerCloseTime).toBe(1_789_829_012n);
+    expect(page.oldestLedger).toBe(4_640_126);
+    // The page is decoded as the endpoint answered it; a real endpoint applies the filter, the stand-in does not.
+    expect(page.events.map((e) => [e.contract, e.name])).toEqual([["token", "transfer"]]);
+
+    const [request] = mock.calls("getEvents");
+    const params = request!.params as { startLedger: number; pagination: { limit: number }; filters: Array<{ type: string; contractIds: string[]; topics: string[][] }> };
+    expect(params.startLedger).toBe(4_760_000);
+    expect(params.pagination.limit).toBe(50);
+    expect(params.filters).toHaveLength(1);
+    expect(params.filters[0]).toMatchObject({ type: "contract", contractIds: [KERNEL] });
+    const [created, funded] = params.filters[0]!.topics;
+    expect(created!.map((t) => (t === "*" ? "*" : scValToNative(xdr.ScVal.fromXDR(t, "base64"))))).toEqual(["job_created", "*", "*", clientKey.publicKey()]);
+    expect(funded!.map((t) => scValToNative(xdr.ScVal.fromXDR(t, "base64")))).toEqual(["funded", 7n]);
+  });
+
+  it("reads forward from a cursor, and takes one of cursor and startLedger", async () => {
+    mock.on("getEvents", () => fixture("getEvents.fund-transfer.json"));
+    await square(false).getEvents({ cursor: "0020445418718494719-4294967295" });
+    const [request] = mock.calls("getEvents");
+    expect((request!.params as { pagination: { cursor: string } }).pagination.cursor).toBe("0020445418718494719-4294967295");
+    expect(request!.params).not.toHaveProperty("startLedger");
+    await expect(square(false).getEvents({})).rejects.toThrow(/one of the two/);
+    await expect(square(false).getEvents({ cursor: "1", startLedger: 1 })).rejects.toThrow(/one of the two/);
+  });
+
+  it("decodes the token's events of a page when the token is asked for", async () => {
+    mock.on("getEvents", () => fixture("getEvents.fund-transfer.json"));
+    const page = await square(false).getEvents({ contract: "token", startLedger: 1 });
+    expect(page.events.map((e) => [e.contract, e.name, e.data])).toEqual([["token", "transfer", 10_000_000n]]);
+    expect(page.events[0]!.ledger).toBe(4_760_307);
+  });
+});

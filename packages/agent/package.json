@@ -1,7 +1,7 @@
 {
   "name": "@squaresdk/agent",
   "version": "0.1.0",
-  "description": "Write a Square agent in a few lines: capabilities with prices, an ERC-8004 registration file served at the well-known path, an A2A endpoint whose tasks are admitted and delivered through SquareJob escrow on Arc, and x402 paid routes for per-call work.",
+  "description": "Write a Square agent in a few lines: capabilities with prices, an ERC-8004 registration file served at the well-known path, an A2A endpoint whose tasks are admitted and delivered through SquareJob escrow, and x402 paid routes for per-call work; and, at @squaresdk/agent/stellar, the agent for hire on Stellar that watches the kernel, works, submits and withdraws.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -15,6 +15,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./stellar": {
+      "types": "./dist/stellar/index.d.ts",
+      "default": "./dist/stellar/index.js"
     }
   },
   "files": [
@@ -43,7 +47,8 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "@stellar/stellar-sdk": "16.3.0"
   },
   "engines": {
     "node": ">=20"

@@ -32,6 +32,61 @@ await agent.listen(3000);
 `agentId` is the ERC-8004 token the wallet owns (`square register` mints one, see
 `packages/cli`); `url` is the public origin the card will name. That is the whole agent.
 
+## On Stellar: `@squaresdk/agent/stellar`
+
+Square is moving to Stellar, and the MVP agent lives at `@squaresdk/agent/stellar` beside
+the EVM one above. It is an agent for hire that drives itself: it watches the kernel
+(`square_job`) for jobs created for its key, works each once it is funded, submits the
+output's hash, finalizes once the challenge window has passed (anyone may, and the
+payee has the interest) and withdraws what it was paid. The job's `description` is the
+work order: `translate: bonjour` picks the `translate` capability with `bonjour` as the
+input, a bare description goes to the default (the only capability, or
+`defaultCapability`). No card, DID or A2A endpoint yet; those come with the 8004
+registries (phase 2).
+
+```ts
+import { Keypair } from "@stellar/stellar-sdk";
+import { deploymentFromJson, keypairSigner } from "@squaresdk/core/stellar";
+import { createStellarAgent, fileStore } from "@squaresdk/agent/stellar";
+
+const deployment = deploymentFromJson(JSON.parse(readFileSync("contracts/deployments/testnet.json", "utf8")));
+const agent = createStellarAgent({
+  name: "Atlas",
+  description: "Summarises what it is given.",
+  deployment,
+  signer: keypairSigner(Keypair.fromSecret(process.env.AGENT_SECRET!), deployment.networkPassphrase),
+  store: fileStore("./atlas.provider.json"), // the jobs it has seen, across restarts
+}).capability("summarise", {
+  description: "The first three words.",
+  price: "2.5", // XLM, shown to hirers; the kernel does not enforce it
+  handler: async ({ input }) => input.split(/\s+/).slice(0, 3).join(" "),
+});
+await agent.listen(3000);
+```
+
+What it serves, for the hirer who paid and wants what is behind the hash:
+
+| | |
+|---|---|
+| `GET /health` | name, account, the kernel, how many jobs it is tracking |
+| `GET /capabilities` | what it does and asks for |
+| `GET /jobs`, `GET /jobs/:id` | the jobs it has seen, as the loop keeps them (status, attempts, the transactions) |
+| `GET /jobs/:id/deliverable` | the content whose SHA-256 `submit` put on chain, with the hash and the transaction |
+
+The loop (`createProvider`) is the agent without the HTTP: `tick()` is one pass
+(discover with `getEvents`, read each job, work, submit, finalize, withdraw) and
+`start(intervalMs)` repeats it. Everything it knows is in `state`, kept by the store, so
+a restart resumes: an output that never reached the chain is submitted rather than
+computed again, a handler that failed is retried up to `maxAttempts` while the job is
+still Funded, and what the client did (`reject`) or time did (expiry) is read off the
+chain each tick. `chainOf(client)` is the loop's view of `@squaresdk/core/stellar`'s
+client; a test hands it a kernel in memory.
+
+`npm test` runs the loop against that in-memory kernel (the lifecycle, the capability
+choice, retries, resume from the state file, rejection and expiry) and the HTTP surface;
+`STELLAR_LIVE=1 STELLAR_KERNEL=C… npm test` also hires the agent on testnet for real,
+from an account Friendbot funds, and checks it delivers and is paid.
+
 ## What it serves
 
 | | |

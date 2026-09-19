@@ -23,7 +23,10 @@ export {
   type ContractCall,
   type ContractRef,
   type CreateJobParams,
+  type EventPage,
+  type EventQuery,
   type SquareClientConfig,
+  type TopicFilter,
   type TransactionResult,
   type Trustline,
 } from "./client.js";
