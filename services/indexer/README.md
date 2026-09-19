@@ -107,6 +107,7 @@ proves it by comparing the rebuilt state with the chain field by field.
 | `GET /jobs/finalizable` | Submitted, undisputed jobs whose challenge window has closed | `limit`, `after` |
 | `GET /jobs/provider/:address` | The jobs of one provider | `limit`, `after` |
 | `GET /jobs/:id` | One job with its listing and its dispute | none |
+| `GET /jobs/:id/events` | The settlement record of one job: every journaled event of that id, oldest first, each with its contract, name, block, log index, transaction hash and decoded arguments. The compliance verdict (`ComplianceChecked`, `ReleaseVerified`, `ReleaseRefused`), the screening of the payee, the reputation and validation writes and the payout routing are read from here; the app's job page shows them when it is pointed at an indexer | none |
 | `GET /listings` | The claim listings still on sale | `limit`, `after` |
 | `GET /disputes/open` | The disputes that are not closed | `limit`, `after` |
 | `GET /quarantine` | The hundred most recent set-aside events | none |

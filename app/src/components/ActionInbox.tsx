@@ -54,7 +54,7 @@ export function ActionInbox({ jobs, address, now, scanned }: { jobs: JobSummary[
                           ? formatCountdown(job.challengeEnd, now)
                           : group.kind === "submit"
                             ? `Submit by ${formatTimestamp(submitDeadline(job))}`
-                            : group.kind === "fund" || group.kind === "budget"
+                            : group.kind === "fund" || group.kind === "budget" || group.kind === "evaluate"
                               ? `Expires ${formatTimestamp(job.expiredAt)}`
                               : ""}
                       </span>

@@ -9,6 +9,7 @@ import { DOCS_URL } from "@/lib/wagmi";
 const links = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/new", label: "New job" },
+  { href: "/agents", label: "Agents" },
   { href: "/policy", label: "Policy" },
   { href: "/network", label: "Network" },
 ];

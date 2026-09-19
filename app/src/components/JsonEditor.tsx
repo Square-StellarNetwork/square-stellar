@@ -21,6 +21,7 @@ export function JsonEditor({
   error,
   placeholder,
   minHeight = 240,
+  readOnly = false,
 }: {
   id: string;
   value: string;
@@ -28,6 +29,8 @@ export function JsonEditor({
   error?: string | null;
   placeholder?: string;
   minHeight?: number;
+  /** A preview: the text is selectable and copyable, and nothing is typed into it. */
+  readOnly?: boolean;
 }) {
   const mirror = useRef<HTMLPreElement>(null);
   const [focused, setFocused] = useState(false);
@@ -96,6 +99,7 @@ export function JsonEditor({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         placeholder={placeholder}
+        readOnly={readOnly}
         spellCheck={false}
         wrap="off"
         className={`${inputClass} ${shared} relative block w-full resize-y border-0 bg-transparent py-2.5 pr-3.5 text-transparent caret-carbon placeholder:text-ash focus:border-transparent`}

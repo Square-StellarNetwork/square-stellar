@@ -54,6 +54,7 @@ export default function LandingPage() {
         <ComplianceSlot />
         <div className="flex flex-wrap gap-4">
           <PrimaryButton href="/dashboard">Open the dashboard</PrimaryButton>
+          <GhostButton href="/agents">Register an agent</GhostButton>
           <GhostButton href={DOCS_URL} external>
             Read the design
           </GhostButton>
