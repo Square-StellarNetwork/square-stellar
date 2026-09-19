@@ -6,6 +6,8 @@
 // category hashing, the policy commitment layout — is the part that must agree
 // byte for byte.
 
+import { createHash } from 'node:crypto';
+import { Address, StrKey } from '@stellar/stellar-sdk';
 import { buildPoseidon } from 'circomlibjs';
 
 let poseidon = null;
@@ -14,15 +16,23 @@ export async function getPoseidon() {
   return poseidon;
 }
 
-// An EVM address is 20 bytes, so it fits in one BN254 element as-is. This is
-// the change that took the public signals from ten to eight: the Solana version
-// had to split 32-byte pubkeys into high and low halves.
+// f, the field element of a Stellar address, as docs/decisions/address-field-mapping.md
+// (#4) fixes it:
+//
+//   f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31]   read as a big-endian integer
+//
+// A 32-byte account key or contract hash does not fit in BN254's field; 31
+// bytes of its digest always do (248 bits, below r), so no reduction happens
+// and each address has one field element. The bytes hashed are the ScVal
+// encoding, the one a contract's Address::to_xdr writes; the same rule is in
+// contracts/probes/scripts/address-field.mjs and in the compliance module,
+// and payment.test.js checks this copy against the decision record's vectors.
 export function addressToField(address) {
-  const hex = address.toLowerCase().replace(/^0x/, '');
-  if (!/^[0-9a-f]{40}$/.test(hex)) {
-    throw new Error(`not a 20-byte hex address: ${address}`);
+  if (typeof address !== 'string' || !(StrKey.isValidEd25519PublicKey(address) || StrKey.isValidContract(address))) {
+    throw new Error(`not a Stellar account (G…) or contract (C…) address: ${address}`);
   }
-  return BigInt(`0x${hex}`).toString();
+  const digest = createHash('sha256').update(Address.fromString(address).toScVal().toXDR()).digest();
+  return BigInt(`0x${digest.subarray(0, 31).toString('hex')}`).toString();
 }
 
 // Categories are short strings and 32 bytes does not fit in one field element,
@@ -59,12 +69,19 @@ export const MAX_CATEGORIES = 8;
 // 2026-09-02T13:45:30Z, a Wednesday. Mon=0, so day_of_week 2, hour 13.
 export const TIMESTAMP = 1788356730;
 
+// Real testnet addresses, so every vector can be checked against the chain
+// (docs/decisions/stellar-target.md, address-field-mapping.md,
+// auth-and-token-flow.md): Circle's USDC Stellar Asset Contract; the native
+// XLM SAC as the token the whitelist does not hold; the client and the payer
+// of the auth probe's recorded fund transaction; and the pubnet USDC issuer as
+// the account on the blocked list, which is the decision record's own
+// `blocked` vector.
 export const ADDRESSES = {
-  usdc: '0x3600000000000000000000000000000000000000',
-  otherToken: '0x00000000000000000000000000000000000000ff',
-  provider: '0x1111111111111111111111111111111111111111',
-  blocked: '0x2222222222222222222222222222222222222222',
-  operator: '0x3333333333333333333333333333333333333333',
+  usdc: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+  otherToken: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  provider: 'GBGFKN6QTTVHBK6JLS2NAVDBW6VRA74HUPF7HS66HXL7YGEACA4SXOQ3',
+  blocked: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+  operator: 'GCYUOI4ZTDRVX4STYKSQOZRSD3ZJ6ALX43WTS2N3M5LES63PW5IM272D',
 };
 
 // A policy that the default payment satisfies. Override pieces per test.
@@ -84,8 +101,8 @@ export const DEFAULT_SALTS = Object.freeze([
 
 export async function buildInput(overrides = {}) {
   const {
-    maxPerTx = '10000000',            // 10 USDC at 6 decimals
-    maxDaily = '100000000',           // 100 USDC
+    maxPerTx = '100000000',           // 10 USDC at 7 decimals, the SAC's
+    maxDaily = '1000000000',          // 100 USDC
     tokenWhitelist = [ADDRESSES.usdc],
     blockedAddresses = [ADDRESSES.blocked],
     allowedCategories = ['api-call'],
@@ -98,11 +115,16 @@ export async function buildInput(overrides = {}) {
     timeStartHourUtc = '0',
     timeEndHourUtc = '0',
     recipient = ADDRESSES.provider,
-    amount = '5000000',               // 5 USDC
+    amount = '50000000',              // 5 USDC
     token = ADDRESSES.usdc,
-    dailySpentBefore = '50000000',    // 50 USDC
+    dailySpentBefore = '500000000',   // 50 USDC
     timestamp = TIMESTAMP,
     stripeReceiptHash = '0',
+    // The lookup keys as raw field elements, for the tests that need a value no
+    // address maps to: zero, which the circuit refuses rather than matching a
+    // padding slot.
+    recipientField,
+    tokenField,
   } = overrides;
 
   const tokens = pad(tokenWhitelist.map(addressToField), MAX_WHITELIST);
@@ -129,9 +151,9 @@ export async function buildInput(overrides = {}) {
     time_days_bitmask: String(timeDaysBitmask),
     time_start_hour_utc: String(timeStartHourUtc),
     time_end_hour_utc: String(timeEndHourUtc),
-    recipient_in: addressToField(recipient),
+    recipient_in: recipientField ?? addressToField(recipient),
     amount_in: String(amount),
-    token_in: addressToField(token),
+    token_in: tokenField ?? addressToField(token),
     daily_spent_before_in: String(dailySpentBefore),
     current_unix_timestamp_in: String(timestamp),
     stripe_receipt_hash_in: String(stripeReceiptHash),

@@ -115,3 +115,13 @@ regexes = [
   '''CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA''',
   '''CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75''',
 ]
+
+[[allowlists]]
+description = """Testnet'teki yerli XLM Stellar Asset Contract kimligi
+(docs/decisions/auth-and-token-flow.md'deki olcumlerin token'i): herkese acik,
+zincirden turetilen bir adres. circuits/test/helpers/inputs.mjs'de beyaz
+listede olmayan token vektoru olarak `otherToken:` alaninda duruyor ve
+generic-api-key kurali alan adindaki `token` ile 56 karakterlik base32 degere
+takiliyor. Istisna YOL degil DEGER bazinda, yalnizca bu kimlik icin."""
+regexTarget = "line"
+regexes = ['''CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC''']
