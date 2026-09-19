@@ -204,11 +204,21 @@ The move to Stellar does not change what the key is:
   ([docs/decisions/address-field-mapping.md](../decisions/address-field-mapping.md)).
   That changes what signals 2 and 4 mean, not the constraints: proofs about
   Stellar addresses come from the same circuit and key.
-- **A new phase 2 is needed if [#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20)
-  changes a constraint.**
-- **The ceremony** ([#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51))
-  runs over the circuit as #20 freezes it for Stellar, and its key replaces
-  this one.
+- **[#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20)
+  changed no constraint, and measured that.** Its edits to `payment.circom` are
+  comments; the compiled `payment.r1cs` is byte-identical, sha256
+  `d157244915f4180b4f2b191ad691a35d6ceca64debd5f8964c209352f572e935`, 4849
+  non-linear constraints. The one candidate, a `Num2Bits(248)` range check on
+  the addresses, would have cost 496 and was left out
+  ([circuits/README.md](../../circuits/README.md#the-stellar-port-measured-again)).
+  So the development key needs no new phase 2 to prove Stellar payments.
+- **The circuit's meaning did change, so the ceremony runs on this version.**
+  Signals 2 and 4 and the list entries are `f` of Stellar addresses and amounts
+  are 7-decimal, and the transcript records the hash of the sources that say
+  so. The ceremony ([#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51))
+  runs over `payment.circom` as #20 leaves it, and its key replaces this one.
+  `circuits/scripts/ceremony.mjs` and its drand beacon pins do not change
+  ([docs/ceremony/README.md](../ceremony/README.md#the-circuit-it-runs-over-the-stellar-version)).
 
 ## When this lifts
 

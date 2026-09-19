@@ -14,6 +14,39 @@ this has to be ready when #16 opens rather than started then.
 [i14]: https://github.com/Square-StellarNetwork/square/issues/14
 [i16]: https://github.com/Square-StellarNetwork/square/issues/16
 
+## The circuit it runs over: the Stellar version
+
+On Stellar the ceremony is [#51][i51], and it runs over `payment.circom` as
+[#20][i20] left it, not over any earlier key or source.
+
+- **What #20 changed is the circuit's meaning, not its constraints.** Signals 2
+  and 4 and every address in the policy lists are now `f` of a 32-byte Stellar
+  address, `sha256(XDR(ScVal::Address(addr)))[0..31]`, where they were 20-byte
+  EVM addresses; amounts are 7-decimal SAC units where they were 6-decimal
+  ERC-20 units ([circuits/README.md](../../circuits/README.md#addresses-are-one-field-element),
+  [address-field-mapping.md](../decisions/address-field-mapping.md)). Nothing
+  was added: the one candidate, a `Num2Bits(248)` range check on the addresses,
+  was measured at 496 non-linear constraints and left out.
+- **So the constraint system is the one [#14][i14] froze, byte for byte.** The
+  compiled `payment.r1cs` hashes to
+  `d157244915f4180b4f2b191ad691a35d6ceca64debd5f8964c209352f572e935`: 4849
+  non-linear and 6707 linear constraints over 11584 wires, with circom 2.2.3.
+  That is the value `init` writes into the transcript's `circuit.r1cs_sha256`
+  and the one a verifier recompiles to in [verifying.md](./verifying.md).
+- **The ceremony still has to run on this version.** The transcript records the
+  hash of every source file beside the r1cs, and what a verifier of the key
+  checks is those sources. A ceremony over the Arc-era sources would hash files
+  that define the signals as 20-byte addresses and 6-decimal amounts, which is
+  not the statement the Soroban verifier and the compliance module check.
+- **The tooling does not change.** `circuits/scripts/ceremony.mjs` reads whatever
+  circuit is compiled, and the drand `quicknet` chain hash and group key it pins
+  ([beacon.md](./beacon.md)) are properties of drand, not of this circuit. The
+  phase-1 file ([phase1-ptau.md](./phase1-ptau.md)) is the same one too: 2^14
+  still covers the circuit, since its size did not move.
+
+[i20]: https://github.com/Square-StellarNetwork/square-stellar/issues/20
+[i51]: https://github.com/Square-StellarNetwork/square-stellar/issues/51
+
 ## Why phase 1 is settled and phase 2 is not
 
 The setup inherited from aperture is development quality in **both** halves:

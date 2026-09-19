@@ -15,8 +15,8 @@ scripts/inspect-zkey-setup.mjs   read a zkey's trusted-setup provenance
 > adopted Perpetual Powers of Tau contribution 80, verified by hash and recorded
 > in [docs/ceremony/phase1-ptau.md](../docs/ceremony/phase1-ptau.md) — and a
 > **development phase 2**: one contribution from your own machine, no beacon. It
-> stays a development key until [#16][i16] runs the phase-2 ceremony, and
-> nothing built on it carries an assurance claim. See
+> stays a development key until the phase-2 ceremony ([#51][i51]) runs over this
+> circuit, and nothing built on it carries an assurance claim. See
 > [docs/disclosure/zk-setup-status.md](../docs/disclosure/zk-setup-status.md).
 
 ## Public signals
@@ -29,11 +29,11 @@ verifier. Changing it is a breaking change that needs a new ceremony.
 |---|---|---|
 | 0 | `is_compliant` | `1` when all six rules pass, `0` otherwise. |
 | 1 | `policy_data_hash` | Commitment to the whole policy, openable one field at a time. The hook compares it against the registry. See [The policy commitment](#the-policy-commitment). |
-| 2 | `recipient` | Payee address as a field element. The hook compares it against the job's provider. |
-| 3 | `amount` | Payment amount in USDC base units, 6 decimals. Compared against the job's net payment. |
-| 4 | `token` | Token address as a field element. |
+| 2 | `recipient` | `f(payee)`, the payee's Stellar address as one field element ([Addresses](#addresses-are-one-field-element)). The compliance module compares its 32 bytes with `f` of the job's provider. |
+| 3 | `amount` | Payment amount in USDC base units, 7 decimals. Compared against the job's net payment. |
+| 4 | `token` | `f(token)`, the token contract's address as one field element. Compared with `f` of the kernel's payment token. |
 | 5 | `daily_spent_before` | The operator's spend for the day before this payment. Compared against the counter. |
-| 6 | `current_unix_timestamp` | Seconds. The contract bounds it to `block.timestamp ± tolerance`. |
+| 6 | `current_unix_timestamp` | Seconds. The contract bounds it to the ledger's timestamp `± tolerance`. |
 | 7 | `stripe_receipt_hash` | Poseidon receipt commitment, `0` when no Stripe receipt is claimed. |
 
 A proof that verifies says only that the six checks were *performed* on these
@@ -44,22 +44,56 @@ of someone else's payment.
 
 ### Addresses are one field element
 
-`recipient`, `token`, the entries of `token_whitelist` and `blocked_addresses`,
-and `operator_id_field` each hold one field element per address.
+Every address input carries one field element: the public signals `recipient`
+and `token`, every entry of `token_whitelist` and `blocked_addresses`, and
+`operator_id_field`, which enters only the commitment.
 
 On Stellar an address is 32 bytes, either a `G…` account key or a `C…` contract
-hash, and does not fit in BN254's field. It enters the circuit as
-`f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31]`: 248 bits, always below
-r. The compliance module computes the same `f` for the payee and the token and
-compares it with signals 2 and 4. The definition, the test vectors and why the
-bytes hashed are the `ScVal` XDR are in
-[docs/decisions/address-field-mapping.md](../docs/decisions/address-field-mapping.md).
+hash, and does not fit in BN254's field (r ≈ 2^253.6). It enters the circuit as
 
-The constraints do not change. Nothing in `payment.circom` limits the width of
-these signals: they are required to be non-zero and to equal, or not equal,
-list entries. A proof with Stellar addresses therefore comes from this circuit
-and its existing key; the decision record shows two, verified by snarkjs, by
-the Soroban host and on testnet.
+```
+f(addr) = sha256( XDR(ScVal::Address(addr)) )[0..31]      read big-endian
+signal  = 0x00 || those 31 bytes                          as Soroban reads it
+```
+
+The bytes hashed are the address's `ScVal` XDR, which is what a contract's
+`Address::to_xdr` writes, and not the bare `ScAddress`, which is the same bytes
+without the 4-byte `SCV_ADDRESS` tag; an `f` over the second would disagree with
+the contract on every address. 31 bytes are 248 bits, always below r, so an
+address has exactly one encoding and nothing is ever reduced. Muxed accounts
+(`M…`) are not addresses a contract stores or pays, and have no `f`.
+
+`f` is computed outside the circuit, in three places that must agree byte for
+byte:
+
+- the prover, `services/prover`, for `payment_recipient`, `payment_token`,
+  `operator_id` and every list entry a request sends as a strkey;
+- the policy package, `@squaresdk/policy`, for the same list entries and the
+  operator before it commits;
+- the compliance module on chain, which computes `f(payee)` and `f(token)` itself
+  and compares the 32 bytes with signals 2 and 4.
+
+The definition, the reference implementation and the test vectors are in
+[docs/decisions/address-field-mapping.md](../docs/decisions/address-field-mapping.md).
+The test helpers here compute `f` the same way (`test/helpers/inputs.mjs`), and
+`test/address-field.test.js` holds them to the vectors the `address_field_probe`
+contract asserts. `test/payment.test.js` proves rules 3 and 4 on those real
+addresses, the testnet and pubnet USDC issuers and Stellar Asset Contracts: the
+whitelisted SAC passes and the other fails rule 3, a blocked `G…` account and a
+blocked `C…` contract fail rule 4 and unlisted ones pass, and signals 2 and 4
+come out equal to the vectors' 32 bytes.
+
+**The constraints do not change, and no range check is added.** Nothing in
+`payment.circom` limits the width of these values: they are required to be
+non-zero and to equal, or not equal, list entries. A `Num2Bits(248)` on the two
+public address signals, the analogue of the amounts' `Num2Bits(64)`, was
+measured and left out, because it buys nothing. The verifier refuses any signal
+at or above r, and the compliance module compares signals 2 and 4 with an `f` it
+computes, so a prover cannot pass another value off as an address. What it would
+have cost is under [Constraint cost](#constraint-cost-measured). A proof with
+Stellar addresses therefore comes from this circuit and its existing key; the
+decision record shows two, verified by snarkjs, by the Soroban host and on
+testnet.
 
 History: the Solana version split 32-byte keys into `high`/`low` halves and had
 ten public signals. The Arc version collapsed them to one element each, because
@@ -68,13 +102,21 @@ instead of Poseidon images. Hashing to a field element keeps the Arc layout, so
 there are still eight public signals. Category entries are strings and stay
 Poseidon images.
 
-### Amounts are 6-decimal ERC-20 units
+### Amounts are 7-decimal SAC units
 
-Rules 1 and 2 compare with `LessEqThan(64)`, so amounts stay under 2^64. At 6
-decimals that is roughly 18.4 trillion USDC; at Arc's 18-decimal native
-accounting it would be 18.45 USDC and the circuit could not express a normal
-payment. Escrow and payment paths therefore use the ERC-20 interface — see
-[docs/decisions/erc20-vs-native-usdc.md](../docs/decisions/erc20-vs-native-usdc.md).
+USDC on Stellar is Circle's asset used through its Stellar Asset Contract, and
+the SAC reports 7 decimals
+([docs/decisions/stellar-target.md](../docs/decisions/stellar-target.md)). Every
+amount the circuit reads, `amount`, `daily_spent_before` and the two ceilings,
+is in those base units: 5 USDC is `50000000`.
+
+Rules 1 and 2 compare with `LessEqThan(64)`, so amounts stay under 2^64. At 7
+decimals that is 2^64 / 10^7, about 1.84 trillion USDC, still far beyond any
+plausible mandate, so the move from Arc's 6-decimal ERC-20 view (18.4 trillion)
+did not widen the circuit. The Arc version had its own reason to care: its
+native 18-decimal accounting would have put the bound at 18.45 USDC, which is
+why it used the ERC-20 interface
+([docs/decisions/erc20-vs-native-usdc.md](../docs/decisions/erc20-vs-native-usdc.md)).
 
 The circuit enforces the bound with `Num2Bits(64)` on `amount` and
 `daily_spent_before` rather than assuming it. circomlib's comparator constrains
@@ -334,6 +376,34 @@ which let one committed field be disclosed without opening the other seven, cost
 constraints. `test/constraint-cost.test.js` holds this table to the compiled
 circuit, so the figures cannot go stale again without the build saying so.
 
+### The Stellar port, measured again
+
+[#20][i20] changed what signals 2 and 4 and the list entries mean, from a
+20-byte address to `f` of a 32-byte one, and the amounts' unit, from 6 decimals
+to 7. It changed no constraint. Re-measured after it, the table above is the
+compiled circuit unchanged: **4849** non-linear, **6707** linear, **11584**
+wires, a change of **0**. Its edits to `payment.circom` are comments, and
+`payment.r1cs` compiles byte-identical, sha256
+`d157244915f4180b4f2b191ad691a35d6ceca64debd5f8964c209352f572e935`.
+
+The one constraint #20 could have added is a range check on the addresses. It
+was compiled and measured, and not added, for the reasons under
+[Addresses](#addresses-are-one-field-element):
+
+| Variant, measured | Non-linear | Linear | Wires |
+|---|---|---|---|
+| `Num2Bits(248)` on `recipient` and `token`, the block alone | **496** | **2** | **499** |
+| This `payment.circom` with that block | **5345** | **6709** | **12080** |
+| This `payment.circom` with `Num2Bits(248)` on all 23 address inputs | **10553** | **6730** | **17288** |
+
+The first row is `test/circuits/address_range.circom` compiled standalone, the
+way the timestamp templates are, and the test holds it to the compiler. The
+other two were compiled from this circuit with the block inserted after the
+ceilings' bounds, and the test holds them to the first by arithmetic: each
+`Num2Bits(248)` is 248 non-linear constraints, one linear and 248 wires, so the
+two signals add 496 and the 23 inputs, `recipient`, `token`, the ten whitelist
+and ten blocked entries and `operator_id_field`, add 5704.
+
 ## Building and testing
 
 ```bash
@@ -363,13 +433,19 @@ beacon applied           no
 
 ## What happens next
 
-[#16][i16] runs the ceremony that freezes this circuit. Nothing here may change
-after that without invalidating the proving key and requiring the ceremony to be
-run again, so [#14][i14] was the last chance to change it. [#18][i18] ports the
-prover service to the eight-signal layout, and [#17][i17] generates the Solidity
-verifier from the ceremony's key.
+[#51][i51] runs the phase-2 ceremony over this circuit, the version [#20][i20]
+leaves for Stellar, and that freezes it. Nothing here may change after that
+without invalidating the proving key and running the ceremony again. The
+circuit's constraints are the ones [#14][i14] froze on Arc; what #20 changed is
+their meaning, which is why the ceremony runs on this version and not on an
+earlier key. [#21][i21] carries the prover to Stellar addresses through `f` and
+to the 512-byte Soroban proof encoding, and [#10][i10] writes the
+`groth16_verifier` contract's key constants from the ceremony's key, as
+[#17](https://github.com/Square-StellarNetwork/square/issues/17) did for the
+Solidity verifier on Arc.
 
+[i10]: https://github.com/Square-StellarNetwork/square-stellar/issues/10
 [i14]: https://github.com/Square-StellarNetwork/square/issues/14
-[i16]: https://github.com/Square-StellarNetwork/square/issues/16
-[i17]: https://github.com/Square-StellarNetwork/square/issues/17
-[i18]: https://github.com/Square-StellarNetwork/square/issues/18
+[i20]: https://github.com/Square-StellarNetwork/square-stellar/issues/20
+[i21]: https://github.com/Square-StellarNetwork/square-stellar/issues/21
+[i51]: https://github.com/Square-StellarNetwork/square-stellar/issues/51

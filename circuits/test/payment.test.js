@@ -10,10 +10,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildInput, policyDataHash, addressToField, PUBLIC_SIGNALS,
-  ADDRESSES, TIMESTAMP,
+  ADDRESSES, VECTOR_OF, TIMESTAMP,
 } from './helpers/inputs.mjs';
 import { calculateWitness, isBuilt, wasmPath } from './helpers/witness.mjs';
-import { isCompiled, publicSignalsOf } from './helpers/signals.mjs';
+import {
+  addressVector, isCompiled, publicSignalsOf, signalHex,
+} from './helpers/signals.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUILD = path.resolve(HERE, '..', 'build');
@@ -108,18 +110,30 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
       const { signals } = await run({});
       expect(signals.recipient).toBe(addressToField(ADDRESSES.provider));
       expect(signals.token).toBe(addressToField(ADDRESSES.usdc));
-      expect(signals.amount).toBe('5000000');
-      expect(signals.daily_spent_before).toBe('50000000');
+      // 5 and 50 USDC in the SAC's 7 decimals.
+      expect(signals.amount).toBe('50000000');
+      expect(signals.daily_spent_before).toBe('500000000');
       expect(signals.current_unix_timestamp).toBe(String(TIMESTAMP));
       expect(signals.stripe_receipt_hash).toBe('0');
     });
 
-    it('carries a whole address in one field element', async () => {
-      // The point of the reparameterisation: no high/low split.
+    // Signals 2 and 4 are what the compliance module compares, byte for byte,
+    // with the f it computes for the job's payee and token. So they are read
+    // here as those 32 bytes and set beside the reference vectors, which the
+    // address_field_probe contract asserts: the circuit's output and the
+    // contract's input, compared directly.
+    it('publishes f(payee) and f(token) as the 32 bytes the chain compares', async () => {
+      const { signals } = await run({});
+      expect(signalHex(signals.recipient)).toBe(addressVector(VECTOR_OF.provider).signal);
+      expect(signalHex(signals.token)).toBe(addressVector(VECTOR_OF.usdc).signal);
+    });
+
+    it('carries a whole 32-byte address in one field element, f', async () => {
+      // No high/low split: a G… account's 32-byte key is one signal, and it is
+      // the reference f of that account, below 2^248.
       const { signals } = await run({ recipient: ADDRESSES.blocked });
-      expect(signals.recipient).toBe(
-        BigInt('0x2222222222222222222222222222222222222222').toString(),
-      );
+      expect(signals.recipient).toBe(addressVector(VECTOR_OF.blocked).decimal);
+      expect(BigInt(signals.recipient) < 1n << 248n).toBe(true);
     });
 
     it('commits to the policy the same way the backend must', async () => {
@@ -130,10 +144,10 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
     it('changes the commitment when any policy field changes', async () => {
       const base = await run({});
       for (const override of [
-        { maxPerTx: '10000001' },
-        { maxDaily: '100000001' },
-        { blockedAddresses: [ADDRESSES.otherToken] },
-        { tokenWhitelist: [ADDRESSES.usdc, ADDRESSES.otherToken] },
+        { maxPerTx: '100000001' },
+        { maxDaily: '1000000001' },
+        { blockedAddresses: [ADDRESSES.otherSac] },
+        { tokenWhitelist: [ADDRESSES.usdc, ADDRESSES.otherSac] },
         { allowedCategories: ['api-call', 'inference'] },
         { operator: ADDRESSES.provider },
         { policyIdField: '424243' },
@@ -153,42 +167,60 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
       expect(signals.is_compliant).toBe('1');
     });
 
+    // The ceilings are 10 and 100 USDC, so the edges are one base unit, 10^-7
+    // USDC, either side of 100 000 000 and 1 000 000 000.
     it('rule 1: rejects an amount over the per-transaction ceiling', async () => {
-      const { signals } = await run({ amount: '10000001', dailySpentBefore: '0' });
+      const { signals } = await run({ amount: '100000001', dailySpentBefore: '0' });
       expect(signals.is_compliant).toBe('0');
     });
 
     it('rule 1: allows an amount exactly on the ceiling', async () => {
-      const { signals } = await run({ amount: '10000000', dailySpentBefore: '0' });
+      const { signals } = await run({ amount: '100000000', dailySpentBefore: '0' });
       expect(signals.is_compliant).toBe('1');
     });
 
     it('rule 2: rejects a payment that would cross the daily ceiling', async () => {
-      const { signals } = await run({ amount: '5000000', dailySpentBefore: '95000001' });
+      const { signals } = await run({ amount: '50000000', dailySpentBefore: '950000001' });
       expect(signals.is_compliant).toBe('0');
     });
 
     it('rule 2: allows a payment that lands exactly on the daily ceiling', async () => {
-      const { signals } = await run({ amount: '5000000', dailySpentBefore: '95000000' });
+      const { signals } = await run({ amount: '50000000', dailySpentBefore: '950000000' });
       expect(signals.is_compliant).toBe('1');
     });
 
     it('rule 3: rejects a token that is not whitelisted', async () => {
-      const { signals } = await run({ token: ADDRESSES.otherToken });
+      const { signals } = await run({ token: ADDRESSES.otherSac });
       expect(signals.is_compliant).toBe('0');
     });
 
-    it('rule 3: refuses the zero address outright rather than matching padding', async () => {
-      // Padding slots hold zero, so a zero lookup key would match one. The
-      // circuit rejects the witness instead of quietly answering 0 — the
-      // constraint is what lets the mask arrays go.
-      await expect(run({ token: '0x0000000000000000000000000000000000000000' }))
-        .rejects.toThrow();
+    // #20: rule 3 on Stellar addresses, both ways round. Two real Stellar Asset
+    // Contracts, one on the whitelist and one not, and then the same two with
+    // the whitelist widened, so the verdict follows the list and not the token.
+    it('rule 3, Stellar tokens: the whitelisted SAC passes and the other fails', async () => {
+      const whitelisted = await run({ token: ADDRESSES.usdc, tokenWhitelist: [ADDRESSES.usdc] });
+      const other = await run({ token: ADDRESSES.otherSac, tokenWhitelist: [ADDRESSES.usdc] });
+      expect(whitelisted.signals.is_compliant).toBe('1');
+      expect(other.signals.is_compliant).toBe('0');
+      expect(signalHex(other.signals.token)).toBe(addressVector(VECTOR_OF.otherSac).signal);
+
+      const widened = await run({ token: ADDRESSES.otherSac, tokenWhitelist: [ADDRESSES.usdc, ADDRESSES.otherSac] });
+      expect(widened.signals.is_compliant).toBe('1');
     });
 
-    it('rule 4: refuses a zero recipient', async () => {
-      await expect(run({ recipient: '0x0000000000000000000000000000000000000000' }))
-        .rejects.toThrow();
+    it('rule 3: refuses a zero token key outright rather than matching padding', async () => {
+      // Padding slots hold zero, so a zero lookup key would match one. The
+      // circuit rejects the witness instead of quietly answering 0 — the
+      // constraint is what lets the mask arrays go. No Stellar address has an f
+      // of zero short of a sha256 that opens with 31 zero bytes, so the zero is
+      // put into the witness directly.
+      const input = await buildInput({});
+      await expect(calculateWitness('payment', { ...input, token_in: '0' })).rejects.toThrow();
+    });
+
+    it('rule 4: refuses a zero recipient key', async () => {
+      const input = await buildInput({});
+      await expect(calculateWitness('payment', { ...input, recipient_in: '0' })).rejects.toThrow();
     });
 
     it('rule 4: rejects an unknown input signal, such as the removed blocked_addresses_mask', async () => {
@@ -212,6 +244,25 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
       expect(signals.is_compliant).toBe('0');
     });
 
+    // #20: rule 4 on Stellar addresses, both ways round and for both kinds. A
+    // G… account on the list is refused and one off it is not; a C… contract as
+    // the payee is refused when listed and passes when it is not.
+    it('rule 4, Stellar payees: a blocked G… account fails and an unlisted one passes', async () => {
+      const blocked = await run({ recipient: ADDRESSES.blocked, blockedAddresses: [ADDRESSES.blocked] });
+      const clear = await run({ recipient: ADDRESSES.provider, blockedAddresses: [ADDRESSES.blocked] });
+      expect(blocked.signals.is_compliant).toBe('0');
+      expect(clear.signals.is_compliant).toBe('1');
+      expect(signalHex(blocked.signals.recipient)).toBe(addressVector(VECTOR_OF.blocked).signal);
+      expect(signalHex(clear.signals.recipient)).toBe(addressVector(VECTOR_OF.provider).signal);
+    });
+
+    it('rule 4, Stellar payees: a C… contract is refused when listed and paid when not', async () => {
+      const listed = await run({ recipient: ADDRESSES.otherSac, blockedAddresses: [ADDRESSES.blocked, ADDRESSES.otherSac] });
+      const unlisted = await run({ recipient: ADDRESSES.otherSac, blockedAddresses: [ADDRESSES.blocked] });
+      expect(listed.signals.is_compliant).toBe('0');
+      expect(unlisted.signals.is_compliant).toBe('1');
+    });
+
     it('rule 5: rejects a category that is not allowed', async () => {
       const { signals } = await run({ paymentCategory: 'exfiltration' });
       expect(signals.is_compliant).toBe('0');
@@ -220,7 +271,7 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
     it('reports zero when several rules fail at once', async () => {
       const { signals } = await run({
         amount: '999999999',
-        token: ADDRESSES.otherToken,
+        token: ADDRESSES.otherSac,
         recipient: ADDRESSES.blocked,
       });
       expect(signals.is_compliant).toBe('0');
@@ -354,7 +405,7 @@ describe.skipIf(!HAVE_ZKEY)('proof round trip', () => {
 
   it('still produces a verifying proof for a non-compliant payment', async () => {
     const snarkjs = await import('snarkjs');
-    const input = await buildInput({ token: ADDRESSES.otherToken });
+    const input = await buildInput({ token: ADDRESSES.otherSac });
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
       input, wasmPath('payment'), ZKEY,
     );
@@ -365,7 +416,7 @@ describe.skipIf(!HAVE_ZKEY)('proof round trip', () => {
 
   it('rejects a proof whose public signals were tampered with', async () => {
     const snarkjs = await import('snarkjs');
-    const input = await buildInput({ token: ADDRESSES.otherToken });
+    const input = await buildInput({ token: ADDRESSES.otherSac });
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
       input, wasmPath('payment'), ZKEY,
     );

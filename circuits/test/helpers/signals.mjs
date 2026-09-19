@@ -1,5 +1,8 @@
 // The circuit's public signals, read out of what circom compiled.
 //
+// Also the Stellar side of a signal: its 32 bytes as Soroban reads them, and the
+// reference vectors for f that the compliance module's own f is held to.
+//
 // square#230. The test that was supposed to protect the eight-signal contract
 // could not fail. It counted `PUBLIC_SIGNALS` against itself, compared a
 // `signals` object the test had built *from* that same list, and checked that
@@ -151,3 +154,35 @@ export function r1csConstraintCounts(file) {
 
 export const isCompiled = (circuit = 'payment', buildDir = BUILD) =>
   fs.existsSync(path.join(buildDir, `${circuit}.r1cs`)) && fs.existsSync(path.join(buildDir, `${circuit}.sym`));
+
+/**
+ * A public signal as the 32 bytes Soroban reads, in hex: big-endian, the form
+ * the proof blob carries after its points (docs/decisions/groth16-on-soroban.md)
+ * and the one the compliance module compares with `f(payee)` and `f(token)`.
+ *
+ * For signals 2 and 4 the first byte is always zero, because f keeps 31 bytes
+ * of the digest; a signal at or above 2^248 there is not an address at all.
+ */
+export function signalHex(value) {
+  const n = BigInt(value);
+  if (n < 0n || n >= 1n << 256n) throw new Error(`not a 32-byte value: ${value}`);
+  return n.toString(16).padStart(64, '0');
+}
+
+/**
+ * The reference for f: contracts/probes/address_field_probe/vectors.json, written
+ * by contracts/probes/scripts/address-field.mjs and asserted by the
+ * address_field_probe contract (`cargo test -p address_field_probe`), which is
+ * what the compliance module's f is held to. Reading it here puts the circuit's
+ * output and the contract's input side by side, as 32-byte signals, without a
+ * second copy of the vectors.
+ */
+export const ADDRESS_VECTORS = path.resolve(HERE, '..', '..', '..', 'contracts', 'probes', 'address_field_probe', 'vectors.json');
+
+let vectors = null;
+export function addressVector(name) {
+  vectors ??= JSON.parse(fs.readFileSync(ADDRESS_VECTORS, 'utf8')).vectors;
+  const entry = vectors.find((v) => v.name === name);
+  if (!entry) throw new Error(`${name} is not in ${ADDRESS_VECTORS}`);
+  return entry;
+}

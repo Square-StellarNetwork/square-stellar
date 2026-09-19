@@ -21,7 +21,17 @@ before the first contribution.
 cd circuits
 npm install
 npm run build -- --no-zkey     # compiles the circuit; the ceremony makes the key
+sha256sum build/payment.r1cs   # the Stellar version: d157244915f4180b…f572e935
 ```
+
+On Stellar this is [#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51),
+and the circuit is `payment.circom` as
+[#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20) left it:
+addresses are `f` of a Stellar address and amounts are 7-decimal. Its r1cs is
+the one [README.md](./README.md#the-circuit-it-runs-over-the-stellar-version)
+names in full. If the hash above differs, stop: the compiler or the circuit is
+not the one being frozen. Nothing in `scripts/ceremony.mjs`, its drand pins
+included, changes for the Stellar version.
 
 ## Opening
 

@@ -1,12 +1,14 @@
 // Build witness inputs for payment.circom.
 //
 // Kept beside the tests rather than in the prover service on purpose: the
-// circuit is the source of truth for its own input shape, and #18 ports the
-// service to match it. Anything here that the service also has to do —
-// category hashing, the policy commitment layout — is the part that must agree
-// byte for byte.
+// circuit is the source of truth for its own input shape, and the prover
+// (square-stellar#21) and the policy package (#22) match it. Anything here that
+// they also have to do — f for addresses, category hashing, the policy
+// commitment layout — is the part that must agree byte for byte.
 
+import { createHash } from 'node:crypto';
 import { buildPoseidon } from 'circomlibjs';
+import { Address, StrKey } from '@stellar/stellar-sdk/base';
 
 let poseidon = null;
 export async function getPoseidon() {
@@ -14,15 +16,36 @@ export async function getPoseidon() {
   return poseidon;
 }
 
-// An EVM address is 20 bytes, so it fits in one BN254 element as-is. This is
-// the change that took the public signals from ten to eight: the Solana version
-// had to split 32-byte pubkeys into high and low halves.
-export function addressToField(address) {
-  const hex = address.toLowerCase().replace(/^0x/, '');
-  if (!/^[0-9a-f]{40}$/.test(hex)) {
-    throw new Error(`not a 20-byte hex address: ${address}`);
+// The bytes f hashes: the address as an XDR ScVal, which is what a contract's
+// `Address::to_xdr` writes. Not the bare ScAddress, which is the same bytes
+// without the 4-byte SCV_ADDRESS tag: #4 named that one, and f would then
+// disagree between this side and the compliance module
+// (docs/decisions/address-field-mapping.md).
+export function addressXdr(strkey) {
+  return Address.fromString(strkey).toScVal().toXDR();
+}
+
+// f: a Stellar address as one BN254 field element, as a decimal string.
+//
+//   f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31], read big-endian
+//
+// A G… account key or a C… contract hash is 32 bytes and does not fit in the
+// field, which is ~2^253.6. The first 31 digest bytes are 248 bits, so the value
+// is always below r and never reduced. The Solana version split a 32-byte key
+// into high and low halves and had ten public signals; the Arc version took a
+// 20-byte address as it was. f keeps the eight.
+//
+// Only G… and C… are addresses a contract stores or pays. A muxed account
+// (M…) is refused, as is anything else, so a typo cannot become a field
+// element that matches nothing. contracts/probes/address_field_probe/vectors.json
+// is the reference, written by contracts/probes/scripts/address-field.mjs and
+// checked by a contract; test/address-field.test.js holds this to it.
+export function addressToField(strkey) {
+  if (!StrKey.isValidEd25519PublicKey(strkey) && !StrKey.isValidContract(strkey)) {
+    throw new Error(`not a Stellar account (G…) or contract (C…) address: ${strkey}`);
   }
-  return BigInt(`0x${hex}`).toString();
+  const digest = createHash('sha256').update(addressXdr(strkey)).digest();
+  return BigInt(`0x${digest.subarray(0, 31).toString('hex')}`).toString();
 }
 
 // Categories are short strings and 32 bytes does not fit in one field element,
@@ -59,13 +82,40 @@ export const MAX_CATEGORIES = 8;
 // 2026-09-02T13:45:30Z, a Wednesday. Mon=0, so day_of_week 2, hour 13.
 export const TIMESTAMP = 1788356730;
 
-export const ADDRESSES = {
-  usdc: '0x3600000000000000000000000000000000000000',
-  otherToken: '0x00000000000000000000000000000000000000ff',
-  provider: '0x1111111111111111111111111111111111111111',
-  blocked: '0x2222222222222222222222222222222222222222',
-  operator: '0x3333333333333333333333333333333333333333',
-};
+// USDC's Stellar Asset Contract reports 7 decimals (docs/decisions/stellar-target.md).
+export const USDC_DECIMALS = 7;
+const usdc = (whole) => String(BigInt(whole) * 10n ** BigInt(USDC_DECIMALS));
+
+// Real addresses, so an f computed here can be read against the chain and
+// against the reference vectors. Four are the ones
+// contracts/probes/address_field_probe/vectors.json carries, Circle's USDC
+// issuers and their Stellar Asset Contracts (stellar-target.md); VECTOR_OF
+// names each one's entry, so a test can compare a public signal with the 32
+// bytes the reference implementation wrote.
+//
+//   usdc        the testnet USDC SAC, a C… contract: the token paid and whitelisted
+//   otherSac    the pubnet USDC SAC, a C… contract on no whitelist here
+//   provider    the testnet USDC issuer, a G… account: the payee
+//   blocked     the pubnet USDC issuer, a G… account on the blocked list
+//
+// The operator's f enters only the commitment, so it needs no vector. It is the
+// public key of a keypair drawn with Keypair.random() for these tests, whose
+// secret was never written down: a real account nobody can sign for.
+export const ADDRESSES = Object.freeze({
+  usdc: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+  otherSac: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+  provider: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+  blocked: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+  operator: 'GBY4CRW3JPJYVS2HG4TNQS2PWEAYIHU7CGKZVOFNWJNCBIWX7D22C3ZC',
+});
+
+// Which reference vector each of the four is.
+export const VECTOR_OF = Object.freeze({
+  usdc: 'usdc_sac_testnet',
+  otherSac: 'usdc_sac_pubnet',
+  provider: 'usdc_issuer_testnet',
+  blocked: 'usdc_issuer_pubnet',
+});
 
 // A policy that the default payment satisfies. Override pieces per test.
 // Eight fixed salts. Real policies use commitment.js's randomPolicySalt; these
@@ -84,8 +134,8 @@ export const DEFAULT_SALTS = Object.freeze([
 
 export async function buildInput(overrides = {}) {
   const {
-    maxPerTx = '10000000',            // 10 USDC at 6 decimals
-    maxDaily = '100000000',           // 100 USDC
+    maxPerTx = usdc(10),              // 10 USDC, 100 000 000 base units
+    maxDaily = usdc(100),             // 100 USDC
     tokenWhitelist = [ADDRESSES.usdc],
     blockedAddresses = [ADDRESSES.blocked],
     allowedCategories = ['api-call'],
@@ -98,9 +148,9 @@ export async function buildInput(overrides = {}) {
     timeStartHourUtc = '0',
     timeEndHourUtc = '0',
     recipient = ADDRESSES.provider,
-    amount = '5000000',               // 5 USDC
+    amount = usdc(5),                 // 5 USDC
     token = ADDRESSES.usdc,
-    dailySpentBefore = '50000000',    // 50 USDC
+    dailySpentBefore = usdc(50),      // 50 USDC
     timestamp = TIMESTAMP,
     stripeReceiptHash = '0',
   } = overrides;

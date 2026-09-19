@@ -26,10 +26,10 @@ include "../lib/timestamp.circom";
 //   1. The time-window rule's timestamp decomposition was under-constrained, so
 //      a prover could choose the weekday. It is properly constrained now, in
 //      lib/timestamp.circom, which carries the full explanation.
-//   2. Ten public signals became eight. The Solana version split 32-byte
-//      pubkeys into high/low halves because they exceed the BN254 field; a
-//      20-byte EVM address fits in one element, so recipient_high/low and
-//      token_mint_high/low collapse to one signal each.
+//   2. Ten public signals became eight. Solana split 32-byte pubkeys into
+//      high/low halves because they exceed the BN254 field. A 20-byte EVM
+//      address fits in one element, and a 32-byte Stellar address takes one as
+//      f(addr) (ADDRESSES, after `main` below), so each is a single signal.
 //   3. The list mask arrays are gone. policy_data_hash committed to the list
 //      values but not to the masks, so zeroing blocked_addresses_mask turned
 //      rule 4 off while leaving the commitment byte-identical. See the comment
@@ -43,22 +43,22 @@ include "../lib/timestamp.circom";
 //
 //   [0] is_compliant             1 when all six rules pass, else 0
 //   [1] policy_data_hash         Poseidon commitment to the whole policy
-//   [2] recipient                payee address as a field element
-//   [3] amount                   payment amount, USDC base units (6 decimals)
-//   [4] token                    token address as a field element
+//   [2] recipient                f(payee address); ADDRESSES, after `main`
+//   [3] amount                   payment amount, USDC base units (7 decimals)
+//   [4] token                    f(token contract address)
 //   [5] daily_spent_before       operator's spend for the day before this one
-//   [6] current_unix_timestamp   seconds; the contract bounds it to block.timestamp
+//   [6] current_unix_timestamp   seconds; the contract bounds it to ledger time
 //   [7] stripe_receipt_hash      Poseidon receipt commitment, 0 when unused
 //
-// AMOUNTS ARE 6-DECIMAL ERC-20 UNITS
+// AMOUNTS ARE 7-DECIMAL SAC UNITS
 //
 // Rules 1 and 2 compare with LessEqThan(64), so amounts must stay under 2^64.
-// On Arc, USDC has two interfaces: the ERC-20 side reports 6 decimals and
-// native gas accounting uses 18. At 6 decimals 2^64 is about 18.4 trillion
-// USDC; at 18 it is 18.44 USDC, which the circuit could not express. Escrow and
-// payment paths therefore use the ERC-20 interface — see
-// docs/decisions/erc20-vs-native-usdc.md. The bound is enforced here rather
-// than assumed, because an unenforced assumption is how the time rule broke.
+// USDC on Stellar is Circle's asset used through its Stellar Asset Contract,
+// which reports 7 decimals (docs/decisions/stellar-target.md). At 7 decimals
+// 2^64 base units are about 1.84 trillion USDC, far past any mandate, so the
+// move from Arc's 6-decimal ERC-20 view did not have to widen the bound. It is
+// enforced here rather than assumed, because an unenforced assumption is how
+// the time rule broke.
 //
 // WHAT STAYS PRIVATE
 //
@@ -79,11 +79,11 @@ template PaymentCompliance(MAX_WHITELIST, MAX_BLOCKED, MAX_CATEGORIES) {
     signal input max_per_tx;
     signal input max_daily;
 
-    // Address lists hold field elements directly. The Solana version stored a
-    // Poseidon hash of each entry's two halves because a 32-byte pubkey needed
-    // two field elements to be compared as one value; a 20-byte address does
-    // not, so the hashing is gone and membership is plain equality. Slots
-    // 0..count-1 carry real entries and the rest are zero-padded.
+    // Address lists hold f(address), one element per entry (ADDRESSES, after
+    // `main`). The Solana version stored a Poseidon hash of each entry's two
+    // halves because a 32-byte pubkey needed two field elements to compare as
+    // one value; f gives a Stellar address one, so membership is plain
+    // equality. Slots 0..count-1 carry real entries; the rest are zero-padded.
     //
     // There are no mask arrays any more, and their absence is a fix rather than
     // a simplification. Each list used to come with a parallel mask marking the
@@ -211,9 +211,9 @@ template PaymentCompliance(MAX_WHITELIST, MAX_BLOCKED, MAX_CATEGORIES) {
     // active was never doing any work — while leaving an uncommitted input that
     // could switch rule 4 off entirely.
     //
-    // None of the three can legitimately be zero. `token` and `recipient` are
-    // addresses the contract binds to a real token and a real provider, and
-    // `payment_category` is a Poseidon image.
+    // None can legitimately be zero: `token` and `recipient` are f of the token
+    // and provider the contract binds, zero only if a sha256 began with 31 zero
+    // bytes, and `payment_category` is a Poseidon image.
     component token_is_zero = IsZero();
     token_is_zero.in <== token;
     token_is_zero.out === 0;
@@ -428,10 +428,10 @@ template PaymentCompliance(MAX_WHITELIST, MAX_BLOCKED, MAX_CATEGORIES) {
     // where time_field is 0 when no restriction is configured, otherwise
     // poseidon([1, days_bitmask, start_hour, end_hour]).
     //
-    // The list entries feeding the three list hashes are now raw address field
-    // elements rather than Poseidon images of high/low halves, so a commitment
-    // produced by the Solana-era backend will not match this circuit. That is
-    // expected: the whole public layout changed, and the ceremony has not run.
+    // The entries feeding the two address-list hashes are f(address) values,
+    // not Poseidon images of high/low halves nor raw 20-byte EVM addresses, so a
+    // policy committed by the Solana-era or Arc-era backend commits differently
+    // here. That is expected: every address input changed its meaning.
     component cat_list_hash = Poseidon(MAX_CATEGORIES);
     for (var i = 0; i < MAX_CATEGORIES; i++) {
         cat_list_hash.inputs[i] <== allowed_categories[i];
@@ -506,3 +506,34 @@ template PaymentCompliance(MAX_WHITELIST, MAX_BLOCKED, MAX_CATEGORIES) {
 // them is a breaking circuit change: it needs a new trusted setup and a new
 // on-chain verifying key.
 component main = PaymentCompliance(10, 10, 8);
+
+// ADDRESSES ARE f(ADDRESS)
+//
+// recipient, token, every token_whitelist and blocked_addresses entry, and
+// operator_id_field carry one field element per Stellar address:
+//
+//   f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31], read big-endian
+//
+// A G… account or C… contract is 32 bytes and does not fit in the field, so
+// it is hashed outside this circuit: by the prover and the policy package off
+// chain, and by the compliance module on chain, which computes f(payee) and
+// f(token) itself and compares them with signals 2 and 4 byte for byte. 31
+// bytes are 248 bits, always below r, so an address has one encoding and
+// nothing is ever reduced. docs/decisions/address-field-mapping.md is the
+// definition and carries the test vectors.
+//
+// There is no Num2Bits(248) on these inputs, and that was measured rather than
+// assumed (square-stellar#20). No constraint above depends on an address's
+// width: the keys are required non-zero and compared for equality, nothing
+// more. The verifier refuses a signal at or above r, and the module compares
+// signals 2 and 4 with an f it computes, so a prover cannot pass another value
+// off as an address. The check would cost 496 non-linear constraints on the
+// two public address signals and 5704 on all 23 address inputs;
+// circuits/README.md records the measurement and test/constraint-cost.test.js
+// holds it.
+//
+// This note sits after `main` on purpose. The witness calculator circom builds
+// from this file reports source line numbers in its assertion messages, so a
+// comment inserted above any code changes payment.wasm even though payment.r1cs
+// stays byte-identical. Down here it moves no line, and the file compiles to
+// the same payment.wasm it did before the note was written.

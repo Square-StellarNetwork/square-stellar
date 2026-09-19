@@ -6,7 +6,10 @@
 //
 // Writes, in snarkjs' own shapes:
 //   <out-dir>/snarkjs/{vk,proof,public}.json
-//       a compliant payment with the default test input (test/helpers/inputs.mjs)
+//       a compliant payment with the default test input (test/helpers/inputs.mjs).
+//       Since #20 that input is Stellar addresses through f and 7-decimal
+//       amounts; the committed vectors were written before, from the 20-byte
+//       default, and record that run.
 //   <out-dir>/stellar/{compliant,blocked}.{proof,public}.json
 //       the same circuit and key with recipient, token, operator and the list
 //       entries set to f(address) of real Stellar addresses

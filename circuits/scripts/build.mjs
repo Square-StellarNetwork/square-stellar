@@ -33,6 +33,9 @@ const CIRCUITS = [
   { name: 'payment', file: 'payment.circom' },
   { name: 'timestamp_checked', file: 'test/circuits/timestamp_checked.circom' },
   { name: 'timestamp_unchecked', file: 'test/circuits/timestamp_unchecked.circom' },
+  // #20: the address range check measured and not added. Compiled only so
+  // test/constraint-cost.test.js can hold circuits/README.md's figure to it.
+  { name: 'address_range', file: 'test/circuits/address_range.circom' },
 ];
 
 // Entropy never goes in argv — argv is visible to every process on the machine
