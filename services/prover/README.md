@@ -5,9 +5,13 @@ payment-compliance circuit.
 
 Carried over from `aperture/services/prover-service` under [#4][i4], with the
 compliance-violation log leak fixed on the way in — see
-[What changed from aperture](#what-changed-from-aperture).
+[What changed from aperture](#what-changed-from-aperture). Moved to Stellar
+under [#21][s21]: Stellar addresses through `f`, 7-decimal amounts, and the
+proof as the Soroban verifier takes it — see
+[What changed for Stellar](#what-changed-for-stellar).
 
 [i4]: https://github.com/Square-StellarNetwork/square/issues/4
+[s21]: https://github.com/Square-StellarNetwork/square-stellar/issues/21
 
 ## Endpoints
 
@@ -94,6 +98,12 @@ recorded fixture:
   drift between this service and the circuit fails here. It runs whenever that
   file exists, with or without `PROVER_ARTIFACTS_DIR`, and skips with a message
   saying how to build it when it does not.
+- `test/soroban-encoding.test.js` holds the proof blob to the vectors the
+  A-cluster probe verified on the Soroban host and on testnet
+  (`contracts/probes/groth16_probe/vectors.json`), byte for byte, and with
+  artifacts proves a payment with Stellar addresses and checks the blob it
+  makes: snarkjs verifies it, signals 2 and 4 are `f` of the payee and the
+  token, a tampered signal does not verify.
 
 After a circuit change there is nothing to regenerate. Rebuild the circuit and
 run the suite again, so `circuit-agreement.test.js` reads the new wasm:
@@ -107,6 +117,38 @@ CI does the same in the `prover (real proving key)` job
 (`.github/workflows/circuits.yml`), which builds the circuit and a proving key
 before running this package's tests; [docs/ci.md](../../docs/ci.md) lists the
 suite as run there.
+
+## What changed for Stellar
+
+[#21][s21] follows [docs/decisions/stellar-target.md](../../docs/decisions/stellar-target.md),
+[address-field-mapping.md](../../docs/decisions/address-field-mapping.md) and
+[groth16-on-soroban.md](../../docs/decisions/groth16-on-soroban.md). The circuit
+did not change ([#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20)),
+so the eight signals, the commitment and the rules are as they were; what
+enters and leaves the service did:
+
+| Was | Is | Why |
+|---|---|---|
+| 20-byte `0x` addresses, carried as their value | Stellar addresses, `G…` accounts and `C…` contracts, carried as `f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31]` | A 32-byte address does not fit BN254's field; 31 bytes of its digest always do. The compliance module computes the same `f` for the payee and the token it releases to and compares with signals 2 and 4. `src/hash.js` is one of three implementations held to one set of vectors (the contract probe and `circuits/test/helpers/inputs.mjs` are the others). |
+| Amounts at 6 decimals, the ERC-20's | Amounts at 7 decimals, the Stellar Asset Contract's | Base units of USDC on Stellar. The 64-bit bound stays: 2^64 base units are about 1.84 trillion USDC. |
+| `solidity` only | `soroban` beside it: `proof`, the 512-byte blob `A(64) ‖ B(128) ‖ C(64) ‖ 8 × signal(32)`, and its parts | What `groth16_verifier.verify_proof` reads and `square_job.set_compliance_proof` stores. G2 is written imaginary part first, the host's order (CAP-0074); the other order is a host error, not a false answer. `solidity` stays while the EVM contracts remain. |
+
+A 20-byte `0x` address is still accepted, as its raw value, while the EVM
+contracts and the anvil scenarios in CI remain
+([docs/upstream/foundry-to-soroban.md](../../docs/upstream/foundry-to-soroban.md));
+the error for anything that is neither names the Stellar forms only. No
+address, of either kind, ever appears in an error message or a log line.
+
+`contracts/script/verify-on-stellar.mjs` simulates a proof against the
+verifier on testnet, which runs the real network's BN254 host functions and
+costs nothing; `prove-and-verify-on-stellar.mjs` runs the whole path, policy
+to on-chain verification, in one process. Until [#10](https://github.com/Square-StellarNetwork/square-stellar/issues/10)'s
+verifier is deployed ([#45](https://github.com/Square-StellarNetwork/square-stellar/issues/45)),
+both take `--probe C… --vk artifacts/payment_vk.json` and check against the
+A-cluster probe, which takes the key as an argument. Measured on 2026-09-19
+with this build's development key: 29,991,050 instructions and a
+`minResourceFee` of 40,108 stroops per verification, a tampered signal, a
+substituted commitment and `s + r` refused.
 
 ## What changed from aperture
 

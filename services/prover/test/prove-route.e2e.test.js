@@ -28,16 +28,21 @@ const hasArtifacts =
   fs.existsSync(path.join(ARTIFACTS, 'payment.wasm')) &&
   fs.existsSync(path.join(ARTIFACTS, 'payment.zkey'));
 
-const address = (nibble) => `0x${String(nibble).repeat(40)}`;
+// Real testnet addresses (docs/decisions/stellar-target.md, auth-and-token-flow.md):
+// the pubnet USDC issuer as the blocked account, the USDC SAC as the whitelisted
+// token, the XLM SAC as the token that is not, and the auth probe's accounts.
+const USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
+const XLM_SAC = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+const PROVIDER = 'GBGFKN6QTTVHBK6JLS2NAVDBW6VRA74HUPF7HS66HXL7YGEACA4SXOQ3';
 
 const SECRET = {
   maxDaily: '987654321987',
   maxPerTx: '123454321123',
   dailySpentBefore: '55555555555',
-  blockedA: address(2),
-  whitelistA: address(4),
+  blockedA: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+  whitelistA: USDC_SAC,
   categoryA: 'super-secret-category',
-  operator: address(3),
+  operator: 'GCYUOI4ZTDRVX4STYKSQOZRSD3ZJ6ALX43WTS2N3M5LES63PW5IM272D',
 };
 
 // Over the per-transaction ceiling and over the daily ceiling, paying a mint
@@ -53,8 +58,8 @@ const NON_COMPLIANT_REQUEST = {
   blocked_addresses: [SECRET.blockedA],
   token_whitelist: [SECRET.whitelistA],
   payment_amount: '999999999999',
-  payment_token: address(9),
-  payment_recipient: address(1),
+  payment_token: XLM_SAC,
+  payment_recipient: PROVIDER,
   payment_endpoint_category: SECRET.categoryA,
   daily_spent_before: SECRET.dailySpentBefore,
   current_unix_timestamp: '1788356730',
@@ -106,7 +111,9 @@ describe.skipIf(!hasArtifacts)('POST /prove, real proof', () => {
       expect.arrayContaining(['per_transaction_limit', 'daily_limit', 'token_whitelist']),
     );
     // A proof is still produced: the circuit proves the check ran, not that the
-    // outcome was positive.
+    // outcome was positive. The Soroban blob is what the kernel stores: 512 bytes.
+    expect(response.body.soroban.proof).toMatch(/^0x[0-9a-f]{1024}$/);
+    expect(response.body.soroban.input).toHaveLength(8);
     expect(response.body.solidity.a).toHaveLength(2);
     expect(response.body.solidity.input).toHaveLength(8);
     expect(response.body.raw_public).toHaveLength(8);

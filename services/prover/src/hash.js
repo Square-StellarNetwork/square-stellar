@@ -12,11 +12,16 @@
 // that used to fold the two halves into one comparable value. Address list
 // entries are now raw field elements and membership is plain equality.
 // Categories are still hashed — they are strings, and 32 bytes does not fit.
+// What changed for Stellar (#21): a 32-byte address does not fit, and enters
+// as f(addr), one field element per address (addressToField below); the list
+// layout and the equality membership stay as they were.
 //
 // Error messages name the field and never the value. Several of these run on
 // private policy entries, and an error travels to the log and the HTTP
 // response; see #4.
 
+import { createHash } from 'node:crypto';
+import { Address, StrKey } from '@stellar/stellar-sdk';
 import { buildPoseidon } from 'circomlibjs';
 
 // Built when the module loads, not on the first hash.
@@ -36,20 +41,41 @@ export async function poseidon(inputs) {
   return poseidonField(inputs);
 }
 
-// A 20-byte EVM address as a field element.
+// A Stellar address as a field element: f, as docs/decisions/address-field-mapping.md
+// (#4) fixes it.
 //
-// Checksums are not validated: the contract binds this value to an address it
-// already knows, so a wrong-but-well-formed address fails there rather than
-// here, and rejecting a lowercase address would only break callers.
+//   f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31]   read as a big-endian integer
+//
+// A G… account key or a C… contract hash is 32 bytes and does not fit in
+// BN254's field; 31 bytes of its digest always do (248 bits, below r), so no
+// reduction happens and each address has one field element. The bytes hashed
+// are the ScVal encoding, the one a contract's Address::to_xdr writes and the
+// compliance module hashes for the payee and the token it releases to. The
+// reference implementation is contracts/probes/scripts/address-field.mjs;
+// test/soroban-encoding.test.js holds this one to its vectors.
+//
+// The strkey is checked (its version byte and CRC), so a value that is not an
+// address is refused by field name before anything is hashed. The value itself
+// never appears in the message; see the note at the top of this file.
 export function addressToField(address, label = 'address') {
   if (typeof address !== 'string') {
     throw new Error(`${label}: must be a string`);
   }
-  const hex = address.trim().toLowerCase().replace(/^0x/, '');
-  if (!/^[0-9a-f]{40}$/.test(hex)) {
-    throw new Error(`${label}: must be a 20-byte hex address`);
+  const text = address.trim();
+  if (StrKey.isValidEd25519PublicKey(text) || StrKey.isValidContract(text)) {
+    const digest = createHash('sha256').update(Address.fromString(text).toScVal().toXDR()).digest();
+    return BigInt(`0x${digest.subarray(0, 31).toString('hex')}`).toString();
   }
-  return BigInt(`0x${hex}`).toString();
+  // Transitional: a 20-byte EVM address, carried as its raw value, the way the
+  // Solidity contracts bind it. The anvil scenarios in CI (contracts/script)
+  // still run the EVM stack; this branch leaves with those contracts (#19,
+  // docs/upstream/foundry-to-soroban.md), and nothing on the Stellar path
+  // sends one.
+  const hex = text.toLowerCase().replace(/^0x/, '');
+  if (/^[0-9a-f]{40}$/.test(hex)) {
+    return BigInt(`0x${hex}`).toString();
+  }
+  throw new Error(`${label}: must be a Stellar account (G…) or contract (C…) address`);
 }
 
 // A category string's bytes, once it is known to be one: a string of 1 to 32

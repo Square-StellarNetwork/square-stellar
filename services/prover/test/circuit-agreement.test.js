@@ -17,7 +17,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { buildCircuitInput } from '../src/prover.js';
-import { poseidon } from '../src/hash.js';
+import { addressToField, poseidon } from '../src/hash.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CIRCUIT_BUILD = path.resolve(HERE, '..', '..', '..', 'circuits', 'build');
@@ -32,12 +32,16 @@ const PUBLIC_SIGNALS = [
   'daily_spent_before', 'current_unix_timestamp', 'stripe_receipt_hash',
 ];
 
+// Real testnet addresses, the ones circuits/test/helpers/inputs.mjs carries
+// (docs/decisions/stellar-target.md, auth-and-token-flow.md,
+// address-field-mapping.md): the USDC SAC, the XLM SAC, the auth probe's
+// client and payer, and the pubnet USDC issuer as the blocked account.
 const ADDR = {
-  usdc: '0x3600000000000000000000000000000000000000',
-  other: '0x00000000000000000000000000000000000000ff',
-  provider: '0x1111111111111111111111111111111111111111',
-  blocked: '0x2222222222222222222222222222222222222222',
-  operator: '0x3333333333333333333333333333333333333333',
+  usdc: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+  other: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  provider: 'GBGFKN6QTTVHBK6JLS2NAVDBW6VRA74HUPF7HS66HXL7YGEACA4SXOQ3',
+  blocked: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+  operator: 'GCYUOI4ZTDRVX4STYKSQOZRSD3ZJ6ALX43WTS2N3M5LES63PW5IM272D',
 };
 
 // 2026-09-02T13:45:30Z, a Wednesday at 13:45 UTC.
@@ -49,16 +53,16 @@ function request(overrides = {}) {
     // square#45: the secret the eight leaf salts derive from.
     policy_salt: '7777777777777777777777777777777777777777777777777777777777777',
     operator_id: ADDR.operator,
-    max_daily_spend: '100000000',
-    max_per_transaction: '10000000',
+    max_daily_spend: '1000000000',     // 100 USDC at 7 decimals
+    max_per_transaction: '100000000',  // 10 USDC
     allowed_endpoint_categories: ['api-call'],
     blocked_addresses: [ADDR.blocked],
     token_whitelist: [ADDR.usdc],
-    payment_amount: '5000000',
+    payment_amount: '50000000',        // 5 USDC
     payment_token: ADDR.usdc,
     payment_recipient: ADDR.provider,
     payment_endpoint_category: 'api-call',
-    daily_spent_before: '50000000',
+    daily_spent_before: '500000000',   // 50 USDC
     current_unix_timestamp: TIMESTAMP,
     ...overrides,
   };
@@ -91,18 +95,22 @@ describe.skipIf(!HAVE_CIRCUIT)('the prover agrees with the circuit', () => {
     expect(signals.is_compliant).toBe('1');
   });
 
-  it('encodes addresses as single field elements', async () => {
-    // The change that took the layout from ten signals to eight. A whole
-    // address, not a high half.
+  it('encodes addresses as single field elements, f, the way the decision record fixes it', async () => {
+    // One element per address, no high half; the values are the decision
+    // record's own vectors for these addresses (address-field-mapping.md),
+    // which contracts/probes/address_field_probe checks against the contract.
     const signals = await witnessFor(request());
-    expect(signals.recipient).toBe(BigInt(ADDR.provider).toString());
-    expect(signals.token).toBe(BigInt(ADDR.usdc).toString());
+    expect(signals.recipient).toBe(addressToField(ADDR.provider));
+    expect(signals.token).toBe(addressToField(ADDR.usdc));
+    expect(signals.token).toBe(BigInt('0x00f3f621aaa28a2f21130f183b450020ee2016bb79edd9fdaf15bf5ecba4f002').toString());
+    const blocked = await witnessFor(request({ payment_recipient: ADDR.blocked }));
+    expect(blocked.recipient).toBe(BigInt('0x0057eb773202bd4b5e3528a821ff15a929aa379bf9b7e2943818c97ba7416e9a').toString());
   });
 
   it('mirrors the payment fields the contract cross-checks', async () => {
     const signals = await witnessFor(request());
-    expect(signals.amount).toBe('5000000');
-    expect(signals.daily_spent_before).toBe('50000000');
+    expect(signals.amount).toBe('50000000');
+    expect(signals.daily_spent_before).toBe('500000000');
     expect(signals.current_unix_timestamp).toBe(TIMESTAMP);
     expect(signals.stripe_receipt_hash).toBe('0');
   });
@@ -147,8 +155,8 @@ describe.skipIf(!HAVE_CIRCUIT)('the prover agrees with the circuit', () => {
   it('moves the commitment when any committed field moves', async () => {
     const base = await witnessFor(request());
     const overrides = [
-      { max_per_transaction: '10000001' },
-      { max_daily_spend: '100000001' },
+      { max_per_transaction: '100000001' },
+      { max_daily_spend: '1000000001' },
       { blocked_addresses: [ADDR.other] },
       { token_whitelist: [ADDR.usdc, ADDR.other] },
       { allowed_endpoint_categories: ['api-call', 'inference'] },
@@ -173,8 +181,8 @@ describe.skipIf(!HAVE_CIRCUIT)('the prover agrees with the circuit', () => {
   it('reports the same compliance verdict the circuit does, rule by rule', async () => {
     const cases = [
       [{}, '1'],
-      [{ payment_amount: '10000001', daily_spent_before: '0' }, '0'],
-      [{ daily_spent_before: '95000001' }, '0'],
+      [{ payment_amount: '100000001', daily_spent_before: '0' }, '0'],
+      [{ daily_spent_before: '950000001' }, '0'],
       [{ payment_token: ADDR.other }, '0'],
       [{ payment_recipient: ADDR.blocked }, '0'],
       [{ payment_endpoint_category: 'exfiltration' }, '0'],
