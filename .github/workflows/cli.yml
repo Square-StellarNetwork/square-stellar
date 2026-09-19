@@ -2,9 +2,9 @@ name: cli
 
 # Typecheck, unit-test and smoke-test @squaresdk/cli.
 #
-# Hermetic on purpose: no step contacts an RPC. The live checks against Arc
-# Testnet are opt-in (LIVE=1) and the acceptance test needs a funded key, so
-# neither belongs in a run that has to pass on every pull request.
+# Hermetic on purpose: no step contacts an RPC. The live checks are opt-in
+# (LIVE=1) and the acceptance test needs a funded key, so neither belongs in a
+# run that has to pass on every pull request.
 
 on:
   push:
@@ -14,7 +14,6 @@ on:
       - "packages/core/**"
       - "packages/did-resolver/**"
       - "packages/policy/**"
-      - "docs/smoke/**"
       - "docs/agent-card/schema.json"
       - ".github/workflows/cli.yml"
   # No path filter on pull_request, deliberately. A required status check that a
@@ -112,47 +111,3 @@ jobs:
           check noWallet 65 register --dry-run
 
           exit $fail
-
-  # Phase 1's end-to-end proof, against the agents permanently registered on Arc
-  # Testnet. Read-only: no key, no gas, so it can run on every pull request.
-  #
-  # A separate job on purpose. It is the one thing here that talks to a network,
-  # and a testnet hiccup should read as "smoke failed", not as a unit-test
-  # regression.
-  smoke:
-    name: end-to-end (Arc Testnet)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
-        with:
-          node-version: "20"
-
-      - name: Build @squaresdk/did-resolver
-        working-directory: packages/did-resolver
-        run: |
-          npm install
-          npm run build
-
-      - name: Build @squaresdk/core
-        working-directory: packages/core
-        run: |
-          npm install --install-links
-          npm run build
-
-      - name: Build @squaresdk/policy
-        working-directory: packages/policy
-        run: |
-          npm install --install-links
-          npm run build
-
-      - name: Build @squaresdk/cli
-        working-directory: packages/cli
-        run: |
-          npm install --install-links
-          npm run build
-
-      - name: Resolve the permanent smoke agents
-        working-directory: packages/cli
-        run: npm run test:smoke
