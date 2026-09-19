@@ -149,11 +149,16 @@ const REQUEST = {
 };
 
 describe.skipIf(!HAVE_ARTIFACTS)('a proof this service made, with Stellar addresses', () => {
+  // The key is read out of the zkey itself: the artifact directory holds the
+  // wasm and the zkey wherever the service runs, and payment_vk.json only
+  // where a build left it beside them.
+  const verifyingKey = async () => (await import('snarkjs')).zKey.exportVerificationKey(path.join(ARTIFACTS, 'payment.zkey'));
+
   it('verifies with snarkjs and carries f of the addresses in the blob', async () => {
     const snarkjs = await import('snarkjs');
     const result = await generateProof(REQUEST);
     expect(result.is_compliant).toBe(true);
-    const key = JSON.parse(fs.readFileSync(path.join(ARTIFACTS, 'payment_vk.json'), 'utf8'));
+    const key = await verifyingKey();
     expect(await snarkjs.groth16.verify(key, result.raw_public, result.raw_proof)).toBe(true);
 
     const { soroban } = result;
@@ -177,7 +182,7 @@ describe.skipIf(!HAVE_ARTIFACTS)('a proof this service made, with Stellar addres
     const tampered = [...result.raw_public];
     tampered[3] = '1';
     expect(encodeForSoroban(result.raw_proof, tampered).proof).not.toBe(result.soroban.proof);
-    const key = JSON.parse(fs.readFileSync(path.join(ARTIFACTS, 'payment_vk.json'), 'utf8'));
+    const key = await verifyingKey();
     const snarkjs = await import('snarkjs');
     expect(await snarkjs.groth16.verify(key, tampered, result.raw_proof)).toBe(false);
   });
