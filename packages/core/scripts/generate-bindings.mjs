@@ -12,8 +12,9 @@
 // them; the stellar-cli pin is the default of .github/actions/stellar-cli
 // (what CI installs) and the SDK pin is contracts/probes/package.json's.
 //
-// src/bindings is excluded from this package's tsconfig until #23 wires the
-// clients into @squaresdk/core.
+// src/bindings/square_job is compiled into @squaresdk/core (#23 reads its spec
+// and tables); the other bindings are skeletons and stay excluded in tsconfig
+// until their contracts land.
 //
 //   node scripts/generate-bindings.mjs          write src/bindings
 //   node scripts/generate-bindings.mjs --check  exit 1 if src/bindings is not what this writes

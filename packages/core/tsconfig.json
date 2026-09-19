@@ -3,18 +3,35 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "declaration": true,
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["src", "test"],
-  "exclude": ["src/bindings"]
+  "include": [
+    "src",
+    "test"
+  ],
+  "exclude": [
+    "src/bindings/arbitration",
+    "src/bindings/claim_market",
+    "src/bindings/compliance_module",
+    "src/bindings/groth16_verifier",
+    "src/bindings/keeper_evaluator",
+    "src/bindings/policy_registry",
+    "src/bindings/screening_registry",
+    "src/bindings/square_hook"
+  ]
 }

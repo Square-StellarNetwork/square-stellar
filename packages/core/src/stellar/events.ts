@@ -1,6 +1,6 @@
 import { humanizeEvents, scValToNative, type xdr } from "@stellar/stellar-sdk";
 import type { Api } from "@stellar/stellar-sdk/rpc";
-import { contractsOf, type SquareContractName, type SquareDeployment } from "./deployments.js";
+import { contractsOf, type SquareContractName, type SquareDeployment, type TokenName } from "./deployments.js";
 
 /**
  * A Soroban contract event from one of the contracts the deployment names,
@@ -16,7 +16,7 @@ import { contractsOf, type SquareContractName, type SquareDeployment } from "./d
  * event's place among the transaction's events.
  */
 export interface SquareEvent {
-  contract: SquareContractName | "usdc";
+  contract: SquareContractName | TokenName;
   contractId: string;
   name: string;
   topics: unknown[];
@@ -58,9 +58,10 @@ function isEventResponse(value: unknown): value is Api.EventResponse {
  * The events of the deployment's contracts in `source`, in the order they
  * happened. `source` is a `getTransaction` response (its contract events,
  * per operation), a `getEvents` response or its `events`, or raw
- * `xdr.ContractEvent`s. Events from any other contract, the fee events the
- * XLM SAC emits around a transaction among them, are left out; the USDC
- * SAC's own events (`transfer`) are kept as `usdc`.
+ * `xdr.ContractEvent`s. Events from any other contract are left out; the
+ * payment token's own events (`transfer`) are kept as `token`, and among
+ * them, when the token is XLM, the fee events its SAC emits around a
+ * transaction.
  */
 export function decodeSquareEvents(source: EventSource, deployment: SquareDeployment): SquareEvent[] {
   const known = contractsOf(deployment);

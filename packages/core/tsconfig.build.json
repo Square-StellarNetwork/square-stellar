@@ -1,6 +1,20 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
-  "include": ["src"],
-  "exclude": ["src/bindings"]
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/bindings/arbitration",
+    "src/bindings/claim_market",
+    "src/bindings/compliance_module",
+    "src/bindings/groth16_verifier",
+    "src/bindings/keeper_evaluator",
+    "src/bindings/policy_registry",
+    "src/bindings/screening_registry",
+    "src/bindings/square_hook"
+  ]
 }

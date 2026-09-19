@@ -5,7 +5,9 @@ import {
   connectSquareClient,
   createSquareClient,
   DeploymentNetworkMismatchError,
+  issuedToken,
   keypairSigner,
+  nativeToken,
   SquareContractError,
   TransactionFailedError,
   TransactionPendingError,
@@ -22,9 +24,9 @@ import { fixture, startMockRpc, type MockRpc } from "./rpcMock.js";
  * responses (fixtures/, captured 2026-09-19): what the network said to a
  * `decimals` read, to a `balance` read of an account without a trustline,
  * to a `trust` simulation, and the `fund` transaction of
- * docs/decisions/auth-and-token-flow.md. The deployment names the USDC SAC
- * as the payment token and made-up ids for the rest; only the token is
- * called here, since only its interface is fixed today.
+ * docs/decisions/auth-and-token-flow.md. The deployment names USDC as the
+ * payment token, so the trustline paths are exercised, and made-up ids for
+ * the rest; the kernel's methods are in job.test.ts.
  */
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
@@ -40,6 +42,7 @@ const deployment: SquareDeployment = {
   claimMarket: other(4),
   squareHook: other(5),
   policyRegistry: other(6),
+  token: issuedToken("USDC", USDC_ISSUER, Networks.TESTNET),
   usdc: { code: "USDC", issuer: USDC_ISSUER, contractId: USDC_SAC, decimals: 7 },
   identityRegistry: other(7),
   reputationRegistry: other(8),
@@ -136,7 +139,7 @@ describe("read", () => {
     expect(refused.code).toBe(13);
     expect(refused.errorName).toBe("TrustlineMissingError");
     expect(refused.detail).toBe("trustline entry is missing for account");
-    expect(refused.message).toMatch(/^usdc\.balance: usdc refused with TrustlineMissingError \(#13\)/);
+    expect(refused.message).toMatch(/^usdc\.balance: token refused with TrustlineMissingError \(#13\)/);
     expect(mock.calls("sendTransaction")).toHaveLength(0);
   });
 
@@ -149,7 +152,8 @@ describe("read", () => {
   it("calls any contract by id, named when the deployment names it", async () => {
     mock.on("simulateTransaction", () => fixture("simulateTransaction.usdc-decimals.json"));
     expect(await client().read({ contract: { id: USDC_SAC }, method: "decimals" })).toBe(7);
-    expect(client().resolve({ id: USDC_SAC })).toEqual({ id: USDC_SAC, name: "usdc" });
+    expect(client().resolve({ id: USDC_SAC })).toEqual({ id: USDC_SAC, name: "token" });
+    expect(client().resolve("usdc")).toEqual({ id: USDC_SAC, name: "usdc" });
     expect(client().resolve({ id: other(1) })).toEqual({ id: other(1), name: "square_job" });
     expect(client().resolve({ id: other(40), name: "probe" })).toEqual({ id: other(40), name: "probe" });
     expect(() => client().resolve("compliance_module")).toThrow(/names no compliance_module/);
@@ -170,7 +174,7 @@ describe("write", () => {
     let polls = 0;
     mock.on("getTransaction", () => (polls++ === 0 ? { status: "NOT_FOUND", txHash: FUND_TX, latestLedger: 1, latestLedgerCloseTime: 1, oldestLedger: 1, oldestLedgerCloseTime: 1 } : fixture("getTransaction.fund.json")));
 
-    const result = await client({ signer: true }).trustUsdc();
+    const result = await client({ signer: true }).trustToken();
     expect(result).not.toBeNull();
     expect(result!.hash).toBe(FUND_TX);
     expect(result!.ledger).toBe(4760307);
@@ -195,12 +199,12 @@ describe("write", () => {
   });
 
   it("decodes the events of the deployment's contracts from the transaction", async () => {
-    // The fund transaction moved XLM through the native SAC; naming that SAC as the token makes its transfer the deployment's.
-    const xlm = { ...deployment, usdc: { ...deployment.usdc, contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" } };
+    // The fund transaction moved XLM through the native SAC; naming XLM as the token makes its transfer the deployment's.
+    const xlm = { ...deployment, token: nativeToken(Networks.TESTNET) };
     mock.on("getTransaction", () => fixture("getTransaction.fund.json"));
     const square = createSquareClient({ deployment: xlm, rpc: mock.url, allowHttp: true });
     const result = await square.getTransaction(FUND_TX);
-    expect(result?.events.map((event) => [event.contract, event.name, event.data])).toEqual([["usdc", "transfer", 10_000_000n]]);
+    expect(result?.events.map((event) => [event.contract, event.name, event.data])).toEqual([["token", "transfer", 10_000_000n]]);
     expect(result?.result).toBeNull();
   });
 
@@ -213,7 +217,7 @@ describe("write", () => {
     mock.on("getLedgerEntries", accountEntry);
     mock.on("simulateTransaction", () => fixture("simulateTransaction.usdc-trust.json"));
     mock.on("sendTransaction", () => ({ status: "ERROR", hash: FUND_TX, latestLedger: 1, latestLedgerCloseTime: 1, errorResultXdr: "AAAAAAAAAGT////7AAAAAA==" }));
-    const error = await client({ signer: true }).trustUsdc().catch((e: unknown) => e);
+    const error = await client({ signer: true }).trustToken().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TransactionSendError);
     expect((error as TransactionSendError).status).toBe("ERROR");
     expect((error as TransactionSendError).hash).toBe(FUND_TX);
@@ -225,7 +229,7 @@ describe("write", () => {
     mock.on("simulateTransaction", () => fixture("simulateTransaction.usdc-trust.json"));
     mock.on("sendTransaction", () => ({ status: "PENDING", hash: FUND_TX, latestLedger: 1, latestLedgerCloseTime: 1 }));
     mock.on("getTransaction", () => ({ ...fixture<Record<string, unknown>>("getTransaction.fund.json"), status: "FAILED" }));
-    const error = await client({ signer: true }).trustUsdc().catch((e: unknown) => e);
+    const error = await client({ signer: true }).trustToken().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TransactionFailedError);
     expect((error as TransactionFailedError).hash).toBe(FUND_TX);
     expect((error as TransactionFailedError).ledger).toBe(4760307);
@@ -237,7 +241,7 @@ describe("write", () => {
     mock.on("simulateTransaction", () => fixture("simulateTransaction.usdc-trust.json"));
     mock.on("sendTransaction", () => ({ status: "PENDING", hash: FUND_TX, latestLedger: 1, latestLedgerCloseTime: 1 }));
     mock.on("getTransaction", () => ({ status: "NOT_FOUND", txHash: FUND_TX, latestLedger: 1, latestLedgerCloseTime: 1, oldestLedger: 1, oldestLedgerCloseTime: 1 }));
-    const error = await client({ signer: true, timeoutInSeconds: 1 }).trustUsdc().catch((e: unknown) => e);
+    const error = await client({ signer: true, timeoutInSeconds: 1 }).trustToken().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TransactionPendingError);
     expect((error as TransactionPendingError).hash).toBe(FUND_TX);
     expect(mock.calls("getTransaction").length).toBeGreaterThan(1);
@@ -245,19 +249,19 @@ describe("write", () => {
 
   it("does nothing for a contract signer, which needs no trustline", async () => {
     const contractSigner = { ...signer, address: other(30) };
-    expect(await createSquareClient({ deployment, rpc: mock.url, allowHttp: true, signer: contractSigner }).trustUsdc()).toBeNull();
+    expect(await createSquareClient({ deployment, rpc: mock.url, allowHttp: true, signer: contractSigner }).trustToken()).toBeNull();
     expect(mock.requests).toHaveLength(0);
   });
 });
 
-describe("USDC", () => {
+describe("the payment token", () => {
   it("reads a trustline off the ledger", async () => {
     mock.on("getLedgerEntries", trustlineEntry);
     const square = client();
-    expect(await square.usdcTrustline(keypair.publicKey())).toEqual({ status: "open", balance: 0n, limit: 9223372036854775807n, authorized: true });
-    expect(await square.hasUsdcTrustline(keypair.publicKey())).toBe(true);
-    expect(await square.usdcBalance(keypair.publicKey())).toBe(0n);
-    await expect(square.assertUsdcReceivable(keypair.publicKey())).resolves.toBeUndefined();
+    expect(await square.trustline(keypair.publicKey())).toEqual({ status: "open", balance: 0n, limit: 9223372036854775807n, authorized: true });
+    expect(await square.hasTrustline(keypair.publicKey())).toBe(true);
+    expect(await square.tokenBalance(keypair.publicKey())).toBe(0n);
+    await expect(square.assertReceivable(keypair.publicKey())).resolves.toBeUndefined();
     const [request] = mock.calls("getLedgerEntries");
     const key = xdr.LedgerKey.fromXDR((request!.params!["keys"] as string[])[0]!, "base64");
     expect(key.switch()).toBe(xdr.LedgerEntryType.trustline());
@@ -267,10 +271,10 @@ describe("USDC", () => {
   it("tells a missing trustline from an empty one", async () => {
     mock.on("getLedgerEntries", () => ({ entries: [], latestLedger: 1 }));
     const square = client();
-    expect(await square.usdcTrustline(keypair.publicKey())).toEqual({ status: "missing" });
-    expect(await square.hasUsdcTrustline(keypair.publicKey())).toBe(false);
-    expect(await square.usdcBalance(keypair.publicKey())).toBe(0n);
-    const error = await square.assertUsdcReceivable(keypair.publicKey()).catch((e: unknown) => e);
+    expect(await square.trustline(keypair.publicKey())).toEqual({ status: "missing" });
+    expect(await square.hasTrustline(keypair.publicKey())).toBe(false);
+    expect(await square.tokenBalance(keypair.publicKey())).toBe(0n);
+    const error = await square.assertReceivable(keypair.publicKey()).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TrustlineMissingError);
     expect((error as TrustlineMissingError).account).toBe(keypair.publicKey());
     expect((error as TrustlineMissingError).asset).toBe(`USDC:${USDC_ISSUER}`);
@@ -279,10 +283,10 @@ describe("USDC", () => {
   it("needs no trustline for a contract, whose balance is the SAC's entry", async () => {
     const holder = other(12);
     const square = client();
-    expect(await square.usdcTrustline(holder)).toEqual({ status: "contract" });
-    await expect(square.assertUsdcReceivable(holder)).resolves.toBeUndefined();
+    expect(await square.trustline(holder)).toEqual({ status: "contract" });
+    await expect(square.assertReceivable(holder)).resolves.toBeUndefined();
     mock.on("getLedgerEntries", () => ({ entries: [], latestLedger: 1 }));
-    expect(await square.usdcBalance(holder)).toBe(0n);
+    expect(await square.tokenBalance(holder)).toBe(0n);
     const balance = xdr.LedgerEntryData.contractData(
       new xdr.ContractDataEntry({
         ext: new xdr.ExtensionPoint(0),
@@ -293,11 +297,29 @@ describe("USDC", () => {
       }),
     );
     mock.on("getLedgerEntries", (params) => ({ entries: [{ key: (params!["keys"] as string[])[0], xdr: balance.toXDR("base64"), lastModifiedLedgerSeq: 1 }], latestLedger: 1 }));
-    expect(await square.usdcBalance(holder)).toBe(15_000_000n);
+    expect(await square.tokenBalance(holder)).toBe(15_000_000n);
   });
 
   it("refuses an address that is neither", async () => {
-    await expect(client().usdcTrustline("0x3600000000000000000000000000000000000000")).rejects.toThrow(/not a Stellar account/);
+    await expect(client().trustline("0x3600000000000000000000000000000000000000")).rejects.toThrow(/not a Stellar account/);
+  });
+
+  it("needs no trustline at all for native XLM, whose balance is the account's", async () => {
+    const square = createSquareClient({ deployment: { ...deployment, token: nativeToken(Networks.TESTNET) }, rpc: mock.url, allowHttp: true, signer });
+    expect(await square.trustline(keypair.publicKey())).toEqual({ status: "native" });
+    expect(await square.hasTrustline(keypair.publicKey())).toBe(true);
+    await expect(square.assertReceivable(keypair.publicKey())).resolves.toBeUndefined();
+    expect(await square.trustToken()).toBeNull();
+    expect(mock.calls("getLedgerEntries")).toHaveLength(0);
+    mock.on("getLedgerEntries", accountEntry);
+    const balance = await square.tokenBalance(keypair.publicKey());
+    const entry = xdr.LedgerEntryData.fromXDR((accountEntry() as { entries: Array<{ xdr: string }> }).entries[0]!.xdr, "base64");
+    expect(balance).toBe(BigInt(entry.account().balance().toString()));
+    expect(balance).toBeGreaterThan(0n);
+    const [request] = mock.calls("getLedgerEntries");
+    expect(xdr.LedgerKey.fromXDR((request!.params!["keys"] as string[])[0]!, "base64").switch()).toBe(xdr.LedgerEntryType.account());
+    mock.on("getLedgerEntries", () => ({ entries: [], latestLedger: 1 }));
+    expect(await square.tokenBalance(Keypair.random().publicKey())).toBe(0n);
   });
 });
 
@@ -311,6 +333,7 @@ describe("clientOptions", () => {
     expect(options.signTransaction).toBe(signer);
     expect(options.errorTypes?.[13]).toEqual({ message: "TrustlineMissingError" });
     expect(client().clientOptions("square_job")).not.toHaveProperty("publicKey");
-    expect(client().clientOptions("square_job")).not.toHaveProperty("errorTypes");
+    expect(client().clientOptions("square_job").errorTypes?.[13]).toEqual({ message: "NotExpired" });
+    expect(client().clientOptions("keeper_evaluator")).not.toHaveProperty("errorTypes");
   });
 });

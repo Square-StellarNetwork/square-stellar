@@ -1,17 +1,17 @@
 import { Networks, StrKey, rpc, xdr } from "@stellar/stellar-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { decodeSquareEvents, eventsNamed, ledgerOfEventId, type SquareDeployment } from "../../src/stellar/index.js";
+import { decodeSquareEvents, eventsNamed, ledgerOfEventId, nativeToken, type SquareDeployment } from "../../src/stellar/index.js";
 import { fixture, startMockRpc, type MockRpc } from "./rpcMock.js";
 
 /**
  * The transaction docs/decisions/auth-and-token-flow.md records as tree 6:
  * `fund` on the auth probe playing the kernel, signed by the client and paid
  * by another account, moving 1 XLM through the native SAC. The deployment
- * below names the probe as the kernel and the XLM SAC as the payment token,
+ * below names the probe as the kernel and native XLM as the payment token,
  * so the one contract event in it, the SAC's `transfer`, is the token's.
  */
 const KERNEL = "CCRIALS4QIRS52ZWBP2VAPBIVNKYC23D3IARZKCSNPY6WD5RZHONZIFY";
-const XLM_SAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const XLM_SAC = nativeToken(Networks.TESTNET).contractId;
 const CLIENT = "GBGFKN6QTTVHBK6JLS2NAVDBW6VRA74HUPF7HS66HXL7YGEACA4SXOQ3";
 const FUND_TX = "0dca3bf887508c0cb5bea31b1d57cd45cf955363024bc606dd3a0dfab4692249";
 
@@ -26,7 +26,7 @@ const deployment: SquareDeployment = {
   claimMarket: other(4),
   squareHook: other(5),
   policyRegistry: other(6),
-  usdc: { code: "USDC", issuer: CLIENT, contractId: XLM_SAC, decimals: 7 },
+  token: nativeToken(Networks.TESTNET),
   identityRegistry: other(7),
   reputationRegistry: other(8),
   validationRegistry: other(9),
@@ -47,7 +47,7 @@ describe("events of a transaction", () => {
     const events = decodeSquareEvents(response, deployment);
     expect(events).toEqual([
       {
-        contract: "usdc",
+        contract: "token",
         contractId: XLM_SAC,
         name: "transfer",
         topics: ["transfer", CLIENT, KERNEL, "native"],
@@ -68,7 +68,7 @@ describe("events of a transaction", () => {
   });
 
   it("leave out events of contracts the deployment does not name", () => {
-    expect(decodeSquareEvents(response, { ...deployment, usdc: { ...deployment.usdc, contractId: other(10) } })).toEqual([]);
+    expect(decodeSquareEvents(response, { ...deployment, token: { ...deployment.token, contractId: other(10) } })).toEqual([]);
   });
 
   it("are empty for a transaction the network has not seen", () => {
@@ -85,7 +85,7 @@ describe("events from getEvents", () => {
     const events = decodeSquareEvents(response, deployment);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      contract: "usdc",
+      contract: "token",
       name: "transfer",
       topics: ["transfer", CLIENT, KERNEL, "native"],
       data: 10_000_000n,
@@ -121,7 +121,7 @@ describe("raw contract events", () => {
     const events = raw.events!.contractEventsXdr!.flat().map((b64) => xdr.ContractEvent.fromXDR(b64, "base64"));
     const decoded = decodeSquareEvents(events, deployment);
     expect(decoded).toHaveLength(1);
-    expect(decoded[0]).toMatchObject({ contract: "usdc", name: "transfer", position: { operation: 0, index: 0 }, ledger: undefined, txHash: undefined });
+    expect(decoded[0]).toMatchObject({ contract: "token", name: "transfer", position: { operation: 0, index: 0 }, ledger: undefined, txHash: undefined });
     expect(eventsNamed(decoded, "transfer")).toHaveLength(1);
     expect(eventsNamed(decoded, "fund")).toHaveLength(0);
   });

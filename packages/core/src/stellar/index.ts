@@ -1,8 +1,8 @@
 /**
  * `@squaresdk/core/stellar`: the Stellar client (#23). It sits beside the EVM
- * client at the package root while the Soroban contracts are written
- * (#8–#19); the contract methods join it as their interfaces land, and the
- * EVM client leaves with them.
+ * client at the package root while the Soroban contracts are written; the
+ * kernel's methods are on it (the MVP), the other contracts' join as their
+ * interfaces land, and the EVM client leaves with them.
  */
 export {
   addressField,
@@ -22,9 +22,10 @@ export {
   SquareClient,
   type ContractCall,
   type ContractRef,
+  type CreateJobParams,
   type SquareClientConfig,
   type TransactionResult,
-  type UsdcTrustline,
+  type Trustline,
 } from "./client.js";
 export {
   AGENT_REGISTRIES,
@@ -40,6 +41,7 @@ export {
   type AgentRegistryName,
   type SquareContractName,
   type SquareDeployment,
+  type TokenName,
 } from "./deployments.js";
 export {
   ArchivedStateError,
@@ -66,6 +68,26 @@ export {
 } from "./errors.js";
 export { decodeSquareEvents, eventsNamed, ledgerOfEventId, type SquareEvent } from "./events.js";
 export {
+  deliverableHash,
+  isKernelEventName,
+  JOB_STATUS_NAMES,
+  JobStatus,
+  kernelEvent,
+  kernelEvents,
+  MalformedEventError,
+  SQUARE_JOB_ERRORS,
+  squareJobSpec,
+  toKernelConfig,
+  toSquareJob,
+  type JobRecord,
+  type KernelConfig,
+  type KernelConfigRecord,
+  type KernelEvent,
+  type KernelEventName,
+  type LocatedKernelEvent,
+  type SquareJob,
+} from "./job.js";
+export {
   isStellarNetworkId,
   networkFor,
   networkIdOf,
@@ -84,6 +106,10 @@ export {
   UnknownNetworkError,
   USDC_TESTNET_ISSUER,
   usdcAsset,
+  assetOf,
+  issuedToken,
+  nativeToken,
+  type PaymentToken,
   type StellarCaip2,
   type StellarNetworkId,
   type StellarNetworkProfile,
