@@ -7,20 +7,20 @@ Chain-agnostic security layer for Square services. Five independent modules, one
 | `ssrf` | Server-side request forgery: loopback, LAN, link-local metadata endpoints, obfuscated IP literals, DNS rebinding, redirect laundering, unbounded responses |
 | `idempotency` | Duplicate side effects from client retries, idempotency-key reuse with a different payload |
 | `rateLimit` | Abuse and brute force, with counters that survive restarts and are shared across instances |
-| `rpcFailover` | Single-provider RPC outages, retry storms against a dead endpoint, invisible failovers, health ledgers poisoned by answers the chain gave |
-| `signedMessages` | Signatures reused for another actor, replayed messages, stale or premature messages, cross-chain replay |
+| `rpcFailover` | Single-provider RPC outages, retry storms against a dead endpoint, invisible failovers, an endpoint on the wrong network, health ledgers poisoned by answers the node gave |
+| `signedMessages` | Signatures reused for another actor, replayed messages, stale or premature messages, cross-network replay |
 
 Tables live in `@squaresdk/data`, not here: `idempotency_keys` and `rate_limits` are created by `square-data migrate up`
 and swept by `square-data sweep`. This package ships no DDL.
 
 Everything here was written from a requirements brief and public specifications (RFC 1918, RFC 4193, RFC 6890,
-RFC 8785, EIP-712, the IETF RateLimit header draft). Nothing was copied from another repository, and no code in
+RFC 8785, SEP-43, SEP-53, the IETF RateLimit header draft). Nothing was copied from another repository, and no code in
 this package derives from any other codebase. License: Apache-2.0.
 
 ## Install
 
 ```bash
-npm install @squaresdk/hardening viem hono   # once the v0.1.0 tag is on npm (square#356)
+npm install @squaresdk/hardening @stellar/stellar-sdk hono   # once the v0.1.0 tag is on npm (square#356)
 ```
 
 Not on npm yet: the packages publish under `@squaresdk` from a `v<version>` tag
@@ -31,10 +31,11 @@ and the first has not been cut. Until then, from this repository, after
 ```bash
 (cd packages/data && npm install && npm run build)
 (cd packages/hardening && npm install --install-links && npm run build)
-npm install ../path/to/square/packages/hardening viem hono
+npm install ../path/to/square/packages/hardening @stellar/stellar-sdk hono
 ```
 
-`viem` and `hono` are peer dependencies. `viem` backs the RPC failover transport and EIP-712 signing; `hono` is only
+`@stellar/stellar-sdk` (pinned to the version [docs/decisions/stellar-target.md](../../docs/decisions/stellar-target.md)
+fixes) and `hono` are peer dependencies. The SDK backs the RPC failover and SEP-53 signing; `hono` is only
 needed for the two middleware factories. `undici` is a regular dependency because the SSRF-safe fetch needs a
 connector whose address resolution can be pinned.
 
@@ -242,52 +243,60 @@ answers 429 with `Retry-After` when the limit is exceeded. `keyOf` is required o
 ## RPC failover
 
 ```ts
-import { createFailoverTransport, withRpcRetry } from "@squaresdk/hardening";
-import { createPublicClient } from "viem";
+import { createFailoverRpc, withRpcRetry } from "@squaresdk/hardening";
+import { createSquareClient, deploymentFor } from "@squaresdk/core/stellar";
 
-const transport = createFailoverTransport(["https://rpc-a.example", "https://rpc-b.example"], {
+const deployment = deploymentFor("stellar:testnet");
+const rpc = createFailoverRpc(["https://rpc-a.example", "https://rpc-b.example"], {
+  networkPassphrase: deployment.networkPassphrase,
   baseCooldownMs: 2_000,
   maxBackoffMs: 60_000,
   onFailover: (from, to, error) => metrics.increment("rpc.failover", { from, to, reason: error.name }),
 });
 
-const client = createPublicClient({ transport });
-transport.getHealth();
+const square = createSquareClient({ deployment, rpc });
+rpc.endpointHealth();
 
-const receipt = await withRpcRetry(() => client.getTransactionReceipt({ hash }), { attempts: 4, baseDelayMs: 250 });
+const result = await withRpcRetry(() => square.getTransaction(hash), { attempts: 4, baseDelayMs: 250 });
 ```
 
-The transport is viem's `fallback([...http(url)])` with health tracking around each endpoint. An endpoint that fails
-`failureThreshold` logical requests in a row (default 1) enters a cooldown of `baseCooldownMs * 2^n` capped at
-`maxBackoffMs`, where `n` grows with every further consecutive failure and resets on the first success. Endpoints keep their
-configured priority; a cooling endpoint is skipped as long as a healthier one follows it in the list, and once the
-cooldown ends it is tried again. If every endpoint is cooling down the request is still sent to them in order, so a
-brief outage degrades the client instead of failing it closed. `onFailover(from, to, error)` fires each time a request
-moves from a failed endpoint to the next one, with the error the failed endpoint produced. `getHealth()` returns a
-snapshot per endpoint: healthy flag, consecutive failures, cooldown deadline, last error and timestamps.
+`createFailoverRpc` is one `rpc.Server` over a list of endpoints: every method of the SDK's server is dispatched to
+the first endpoint that is not cooling down, so the result goes wherever a `Server` goes, the Stellar client's `rpc`
+option and a bindings client's `server` included. An endpoint that fails `failureThreshold` requests in a row
+(default 1) enters a cooldown of `baseCooldownMs * 2^n` capped at `maxBackoffMs`, where `n` grows with every further
+consecutive failure and resets on the first success. Endpoints keep their configured priority; a cooling endpoint is
+skipped as long as a healthier one follows it in the list, and once the cooldown ends it is tried again. If every
+endpoint is cooling down the request is still sent to them in order, so a brief outage degrades the client instead of
+failing it closed. `onFailover(from, to, error)` fires each time a request moves from a failed endpoint to the next
+one, with the error the failed endpoint produced. `endpointHealth()` returns a snapshot per endpoint: healthy flag,
+`wrongNetwork`, consecutive failures, cooldown deadline, last error and timestamps. (`getHealth()` stays the RPC
+method of that name.)
 
-**A revert is an answer, not an outage.** Only a failure to answer moves an endpoint's ledger: an HTTP status error, a
-timeout, a dropped connection, a `-32603` internal error, or anything else the endpoint produced in place of a result.
-A request the node answered at the JSON-RPC level leaves `consecutiveFailures`, the cooldown, `lastError` and the
-routing untouched and fires no `onFailover`: a reverted `eth_call`, code `3`, a `-32000` whose message is an execution
-rejection (`execution reverted`, `gas required exceeds allowance`, `nonce too low`, `already known` and their
-neighbours), and the deterministic request errors `-32700`, `-32600`, `-32601` and `-32602`. Without that rule a keeper
-that simulates `finalize` every tick and gets `WindowOpen` back cools its primary endpoint down on the first simulation
-and has both endpoints marked sick by the fourth, with a contract message as the recorded `lastError`.
-`isEndpointFailure(error)` is exported, and the `isEndpointFailure` option replaces it per transport for a provider
-whose codes need a different reading. It asks a different question from `isPermanentRpcError`, which asks whether
-another attempt is worth making: `-32603` is permanent for the retry loop and still the endpoint's fault, while
-`-32000` is retryable and, when it carries a revert, not the endpoint's fault at all.
+**An endpoint on the wrong network never serves a request.** `networkPassphrase` is required. Before an endpoint
+serves its first request it is asked `getNetwork`, and one that answers with another passphrase is excluded for good,
+reported with `wrongNetwork` set; the request moves to the next endpoint without counting a failover. When no endpoint
+is on the expected network the call throws `NoUsableEndpointError` with the ledger. A transport failure on that first
+question counts like any other failure, and the question is asked again once the endpoint comes back.
 
-**One logical request is one upstream call per endpoint.** The `fallback` wrapper is built with `retryCount: 0`
-unless the caller asks for more, so a request walks the endpoint list once: two dead endpoints cost two upstream
-calls, not the eight that viem's own default of three retries would add, and the three-endpoint shape above under
-`withRpcRetry({ attempts: 4 })` costs twelve calls rather than forty-eight. Retrying belongs to `withRpcRetry`, where
-it is visible, countable and applied only after the whole list has been tried once. Health is counted on the same
-unit: an endpoint that fails inside one logical request adds one to `consecutiveFailures` however many times the
-transport called it, so one bad request leaves it cooling for `baseCooldownMs` rather than for `baseCooldownMs * 8`.
+**An answer is not an outage.** Only a failure to answer moves an endpoint's ledger: a transport error (the fetch
+threw, the request timed out), a non-2xx HTTP status, a `-32603` internal error, or any other JSON-RPC error the
+endpoint produced in place of a result. A request the node answered leaves `consecutiveFailures`, the cooldown,
+`lastError` and the routing untouched, fires no `onFailover`, and is thrown as is: the deterministic request errors
+`-32700`, `-32600`, `-32601` and `-32602`, and the errors the SDK raises after a successful round trip ("failed to find
+an entry for key …", a trustline not found, an account not found). Simulation failures are results, never errors, so
+they never reach this rule. Without it a keeper that reads an entry that does not exist yet would cool its primary
+endpoint down for an answer the node gave correctly. `isEndpointFailure(error)` is exported, and the
+`isEndpointFailure` option replaces it per server for a provider whose codes need a different reading. It asks a
+different question from `isPermanentRpcError`, which asks whether another attempt is worth making: `-32603` is
+permanent for the retry loop and still the endpoint's fault, while `-32000` is retryable and the endpoint's fault.
 
-`transportFactory` swaps `http(url)` for anything else, which is how the tests use `custom()` transports.
+**One logical request is one upstream call per endpoint.** A request walks the endpoint list once: two dead endpoints
+cost two upstream calls, and the three-endpoint shape above under `withRpcRetry({ attempts: 4 })` costs twelve calls.
+Retrying belongs to `withRpcRetry`, where it is visible, countable and applied only after the whole list has been
+tried once.
+
+`serverFactory` swaps `new rpc.Server(url, { allowHttp, timeout, headers })` for anything else, which is how the tests
+use doubles.
 
 `withRpcRetry(fn, options)` retries any async call with equal-jitter exponential backoff (`baseDelayMs`, `maxDelayMs`)
 for `attempts` tries.
@@ -299,42 +308,57 @@ than after up to `maxDelayMs`. Once the loop is entered, the error the caller se
 produced.
 
 `isRetryable` decides which errors are worth another attempt. The default retries transient failures and refuses two
-classes: an `AbortError`, and a permanent JSON-RPC error, meaning code `-32600`, `-32601`, `-32602` or `-32603`, or a
-message containing `execution reverted`. The code is read from the error and from its `cause` chain, so a wrapped viem
-error is classified the same way. Everything else, `-32000` server errors and socket failures included, is retried:
-a deterministic client error costs one call, not `attempts` calls with backoff between them. `isPermanentRpcError` is
-exported so the same rule can be reused or extended in a custom predicate.
+classes: an `AbortError`, and a permanent JSON-RPC error, meaning code `-32600`, `-32601`, `-32602` or `-32603`. The
+code is read from the error and from its `cause` chain, so a wrapped error is classified the same way. Everything
+else, `-32000` server errors and socket failures included, is retried: a deterministic client error costs one call,
+not `attempts` calls with backoff between them. `isPermanentRpcError` is exported so the same rule can be reused or
+extended in a custom predicate.
 
 ## Signed messages
 
 ```ts
+import { Keypair } from "@stellar/stellar-sdk";
 import { memoryNonceStore, signAction, verifyAction } from "@squaresdk/hardening";
 
-const message = { actor: account.address, action: "settle", resource: "invoice:42", nonce, issuedAt, expiresAt, chainId };
-const signature = await signAction(account, message);
+const message = { actor: keypair.publicKey(), action: "settle", resource: "invoice:42", nonce, issuedAt, expiresAt, network: "stellar:testnet" };
+const signature = await signAction(keypair, message);          // or a SEP-43 wallet: { address, signMessage }
 
-const result = await verifyAction({ message, signature, expectedActor: session.actor, nonceStore, expectedChainId: 5042002 });
+const result = await verifyAction({ message, signature, expectedActor: session.actor, nonceStore, expectedNetwork: "stellar:testnet" });
 if (!result.ok) reject(result.reason);
 ```
 
-The EIP-712 type is `SquareAction { actor, action, resource, nonce, issuedAt, expiresAt, chainId }` under the domain
-`{ name: "Square", version: "1", chainId }`. `verifyAction` recovers the signer and requires it to equal both
-`message.actor` and `expectedActor`; a signature is therefore only ever valid for the one actor the server was already
-talking to. It then checks `issuedAt <= now < expiresAt` (unix seconds) and consumes the nonce from the `NonceStore`,
-which happens last so a rejected message never burns a nonce. It never throws for a bad signature: every failure is a
-`{ ok: false, reason }` with one of `invalid_signature`, `actor_mismatch`, `unexpected_actor`, `not_yet_valid`,
-`expired`, `nonce_reused`, `chain_mismatch`, `missing_expected_chain_id`, `malformed_message`.
+A `SquareAction { actor, action, resource, nonce, issuedAt, expiresAt, network }` is signed per
+[SEP-53](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0053.md): `actionMessage` renders it as
+canonical JSON, `{ domain: { name: "Square", version: "1", network }, primaryType: "SquareAction", message }` with the
+integers as decimal strings, and the signature is ed25519 over `SHA-256("Stellar Signed Message:\n" + text)`, which
+the SDK's `Keypair.signMessage` and `verifyMessage` implement and the SEP's own test vectors pin here. `actor` is a
+`G…` account; `network` is the CAIP-2 id (`stellar:testnet`, `stellar:pubnet`) or `stellar:local`. `signAction`
+takes a `Keypair` or any SEP-43 wallet object with an `address` and `signMessage` (Stellar Wallets Kit, Freighter),
+accepts the wallet's answer in base64 or hex, and refuses to sign for an actor other than its own address
+(`ActorMismatchError`), which is the one mistake a signature cannot reveal.
+
+`verifyAction` checks that `expectedActor` is `message.actor`, verifies the signature against that account's key
+(ed25519 has no recovery: a signature by anyone else is `invalid_signature`), then checks `issuedAt <= now < expiresAt`
+(unix seconds) and consumes the nonce from the `NonceStore`, which happens last so a rejected message never burns a
+nonce. It never throws for a bad signature: every failure is a `{ ok: false, reason }` with one of
+`invalid_signature`, `unexpected_actor`, `not_yet_valid`, `expired`, `nonce_reused`, `network_mismatch`,
+`missing_expected_network`, `contract_actor_unsupported`, `malformed_message`.
+
+**A contract cannot sign a SEP-53 message.** A `C…` actor, a smart account, has an authorization policy rather than
+an ed25519 key. It is refused with `contract_actor_unsupported` rather than `malformed_message`, so a caller can tell
+"not supported yet" from "not an address"; fee sponsorship and smart accounts (#27) decide what replaces the
+signature there.
 
 `verifyAction` also caps how long a message may live: `expiresAt - issuedAt` may not exceed `maxLifetimeSeconds`
 (default `DEFAULT_MAX_ACTION_LIFETIME_SECONDS`, 300). Without a cap the signer decides how long the verifier has to
 remember its nonce, and a message that expires in a thousand years is a nonce no store can ever drop. The cap is
-checked before the signature is recovered, and a message that exceeds it is refused with `malformed_message` without
+checked before the signature is verified, and a message that exceeds it is refused with `malformed_message` without
 burning a nonce.
 
-`expectedChainId` is required. A `SquareAction` carries its own `chainId` and the domain is built from it, so a
-signature made for one chain recovers correctly on any verifier that does not say which chain it is: the check exists
+`expectedNetwork` is required. A `SquareAction` carries its own `network` and the signed text is built from it, so a
+signature made for one network verifies on any verifier that does not say which network it is on: the check exists
 only if the caller asks for it, so the caller is not allowed to leave it out. A call that reaches `verifyAction`
-without one is refused with `missing_expected_chain_id` before the signature is recovered and without burning a nonce.
+without one is refused with `missing_expected_network` before the signature is verified and without burning a nonce.
 
 `memoryNonceStore` is per process; back the interface with your database for anything that runs on more than one
 instance. It holds one entry per actor and one entry per nonce, and `consume` is a single map lookup: it reads the
@@ -344,11 +368,11 @@ every `pruneIntervalSeconds` (default `MEMORY_NONCE_PRUNE_INTERVAL_SECONDS`, 60)
 cannot turn the hot path into a full scan. The sweep drops actors whose nonces have all expired, so an actor that
 never returns is not carried for the life of the process, and the lifetime cap above bounds what one actor can pile
 up between two sweeps. `prune()` runs that pass on demand and returns the number of actors it dropped; `size()`
-reports how many actors are held.
+reports how many actors are held. A strkey has one spelling, so the actor is keyed as given.
 
-`canonicalJson(value)` is the RFC 8785-style serialiser used by `hashRequest`, exported for reuse: sorted
-keys, no whitespace, numbers exactly as JSON prints them, `toJSON` honoured, and it refuses `NaN`, `Infinity`, bigint
-and top-level `undefined` rather than producing a form that could collide.
+`canonicalJson(value)` is the RFC 8785-style serialiser used by `hashRequest` and `actionMessage`, exported for reuse:
+sorted keys, no whitespace, numbers exactly as JSON prints them, `toJSON` honoured, and it refuses `NaN`, `Infinity`,
+bigint and top-level `undefined` rather than producing a form that could collide.
 
 **Only a plain object carries its whole state in its own enumerable keys, so only a plain object is serialised.** A
 `Map`, a `Set`, and an instance of a class that keeps its state in private fields or accessors all answer
@@ -365,8 +389,8 @@ enumerable keys too.
 npm test
 ```
 
-All tests are hermetic. DNS is scripted through the `lookup` option, the RPC endpoints are `custom()` transports, the
-Postgres stores run against a fake `db` that records the SQL it was given, and the only sockets are to a
+All tests are hermetic. DNS is scripted through the `lookup` option, the RPC endpoints are doubles handed in through
+`serverFactory`, the Postgres stores run against a fake `db` that records the SQL it was given, and the only sockets are to a
 `node:http` server on `127.0.0.1` (which requires `allowPrivate: true` for that suite). The rebinding proof scripts a
 lookup that answers `127.0.0.1` once and `::1` afterwards: the request reaches the server, the lookup is called
 exactly once, and a run that pins `::1` first fails instead of falling back to a resolution that would have worked.

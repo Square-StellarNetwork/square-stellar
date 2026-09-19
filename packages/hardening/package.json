@@ -1,7 +1,7 @@
 {
   "name": "@squaresdk/hardening",
   "version": "0.1.0",
-  "description": "Chain-agnostic security layer: SSRF-safe fetch, request-hash idempotency, durable rate limiting, RPC failover, and signer-actor bound messages.",
+  "description": "Chain-agnostic security layer: SSRF-safe fetch, request-hash idempotency, durable rate limiting, Stellar RPC failover, and SEP-53 signer-actor bound messages.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -31,14 +31,14 @@
     "undici": "^7.29.1"
   },
   "peerDependencies": {
-    "hono": "^4.0.0",
-    "viem": "^2.21.0"
+    "@stellar/stellar-sdk": "16.3.0",
+    "hono": "^4.0.0"
   },
   "devDependencies": {
+    "@stellar/stellar-sdk": "16.3.0",
     "@types/node": "^22.20.1",
     "hono": "^4.13.7",
     "typescript": "^5.6.0",
-    "viem": "^2.21.0",
     "vitest": "^2.1.9"
   },
   "engines": {

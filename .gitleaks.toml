@@ -91,3 +91,13 @@ dizine konan bir Square access token gorunmez oluyordu); deger bazinda istisna
 ile ayni dosyaya girecek baska bir sir yine yakalaniyor."""
 regexTarget = "line"
 regexes = ['''"key":\s*"AAAA[A-Za-z0-9+/=]{40,}"''']
+
+[[allowlists]]
+description = """SEP-53'un kendi test vektorlerindeki gizli anahtar
+(stellar-protocol/ecosystem/sep-0053.md, "Test cases"): spesifikasyonun
+yayimladigi ornek seed; packages/hardening/test/signedMessages.test.ts imza
+uygulamasini bu vektorlere karsi dogruluyor. Hicbir agda deger tutmaz ve
+kimseye ait degildir. Istisna YOL degil DEGER bazinda, tam bu seed icin: baska
+bir S... seed'i (#44'un ekleyecegi Stellar kurali dahil) yine yakalanir."""
+regexTarget = "line"
+regexes = ['''SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW''']
