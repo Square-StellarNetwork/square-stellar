@@ -616,7 +616,7 @@ Caller: anyone.
 | 4 | job → hook.`before_action(ctx + payout, Complete(reason, params))` | try | keeper › job › hook | no | `_beforeHookTolerant`, `SquareJob.sol:213`; `_checkRelease`'s reads of **`SquareJob`** and **`ClaimMarket.payeeOf` → `SquareJob.providerOf`** (`SquareHook.sol:298-304`) are now `ctx` |
 | 4a | hook → module.`check_release(release, proof)`; module: `registered_hook.require_auth()` | try | keeper › job › hook › module | no | `SquareHook.sol:303`, `onlyHook` |
 | 4b | module → verifier.`verify(…)` | try | … › module › verifier | no | as 3d |
-| 4c | module → policy.`record_spend(client, amount)`; policy: `module.require_auth()` as a spender | try | … › module › policy | no | `ComplianceModule.sol:294` |
+| 4c | module → policy.`record_spend(module, client, amount)`; policy: `spender.require_auth()` (invoker auth) and the spender must be in the spender set | try | … › module › policy | no | `ComplianceModule.sol:294` |
 | 4d | hook → screening.`is_cleared(payee)`, `screening_of(payee)` | try | keeper › job › hook › screening | no | `_screeningVerdict`, `SquareHook.sol:215-220` |
 | 5 | kernel state writes and ledger credits; no call | – | keeper › job | – | `SquareJob.sol:215-242` |
 | 6 | job → hook.`after_action(ctx after the transition, Complete, before)` | try | keeper › job › hook | no | `_afterHookTolerant`, `SquareJob.sol:244`; `_reportUnconfirmed`, `_writeReputation`, `settlementFacts` read **`SquareJob`** (`SquareHook.sol:379-381, 486, 505`), now `ctx` |
@@ -875,11 +875,13 @@ pub trait Market {
 }
 ```
 
-The kernel-side entry points take the same parameter types:
+The kernel-side entry points take the same parameter types, after the signer
+argument that [auth-and-token-flow.md](auth-and-token-flow.md#who-authorizes-each-write-function)
+puts first and checks against the job record:
 
-- `submit(job_id, deliverable, params: SubmitParams)`
-- `complete(job_id, reason, params: CompleteParams)`
-- `reject(job_id, reason)`
+- `submit(provider, job_id, deliverable, params: SubmitParams)`
+- `complete(evaluator, job_id, reason, params: CompleteParams)`
+- `reject(caller, job_id, reason)`
 
 ## The three hostile hooks, and how each ends in the kernel
 

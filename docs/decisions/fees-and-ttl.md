@@ -253,8 +253,10 @@ there is no restore.
 | `evaluatorFeeBP` 0 | `minimumProfitableBudget` → `null`; `profitable` false for every budget |
 
 The probe's `finalize` writes nothing, so a real `finalize` costs more. It pays
-`complete`, the hook, the fee transfer and TTL extensions, and with a compliance
-module about 30 M instructions for the pairing. The table exercises the formula.
+`complete`, the hook, the fee transfer and TTL extensions. With a compliance
+module it also verifies the proof three times, about 30 M instructions each and
+about 90 M in all ([call-graph-on-soroban.md](call-graph-on-soroban.md#5-tolerant-hook-calls-what-a-hook-informs-it-never-vetoes-means-on-soroban)).
+The table exercises the formula.
 It is not a forecast. The real figure arrives with the B-cluster contracts, and
 the keeper never uses a figure from this page anyway: it simulates.
 
@@ -471,10 +473,13 @@ read them from the network, and the constructor stores them:
 | `min_persistent_ttl` | `CONFIG_SETTING_STATE_ARCHIVAL.minPersistentTtl` | 120,960 |
 
 The keeper compares both with the live config on every sweep and logs
-`keeper.ttl_config_drift` when they differ. An owner-only `set_ttl_config`
-updates them. If ledgers close faster than `ledger_close_ms`, an entry lives
-for less time than intended. That costs a restore and never loses state
-(principle 2).
+`keeper.ttl_config_drift` when they differ. In every contract that has an owner,
+an owner-only `set_ttl_config` updates them; it is listed with the other owner
+functions in [upgradeability-and-governance.md](upgradeability-and-governance.md#owner-authority-per-contract).
+`claim_market` has no owner, so its `TtlConfig` stays as the constructor stored
+it: its drift is logged and is corrected only by the next deployment. If
+ledgers close faster than `ledger_close_ms`, an entry lives for less time than
+intended. That costs a restore and never loses state (principle 2).
 
 `ledgers_for(s) = ceil(s × 1000 / ledger_close_ms)` and `ledgers_until(ts) =
 ts > now ? ledgers_for(ts − now) : 0`.
@@ -535,7 +540,7 @@ sponsor.
 | Key (EVM origin) | Storage | Class | Extension rule | Payer |
 |---|---|---|---|---|
 | owner, pending owner; payment token and any other constructor-fixed value (EVM immutables `_paymentToken`, `_hookGasLimit`, if [#8][i8] keeps a counterpart of the latter); job counter; `platform_fee_bp`, `evaluator_fee_bp`, treasury; pending fees and `fees_effective_from`; `total_withdrawable`, `total_escrowed`; `TtlConfig` | instance | — | the instance rule [below](#instance-and-code) | owner transactions; keeper sweep |
-| `Job(job_id)` → `JobRecord` (`_jobs`) | persistent | J | on `create_job`, `set_provider`, `set_budget`, `fund`, `submit`, `complete`, `reject`, `claim_refund` | the actor: client, provider, evaluator or keeper, refund claimer |
+| `Job(job_id)` → `JobRecord` (`_jobs`); the record also carries the policy pin `commitment_at_fund`, which the EVM hook kept as `_commitmentAtFund` ([call-graph-on-soroban.md](call-graph-on-soroban.md#1-push-model-hookcontext)) | persistent | J | on `create_job`, `set_provider`, `set_budget`, `fund`, `submit`, `complete`, `reject`, `claim_refund` | the actor: client, provider, evaluator or keeper, refund claimer |
 | `ComplianceProof(job_id)` → bytes ≤ 1,024 (`_complianceProofs`) | persistent | J | on `set_compliance_proof`, and on the read in `complete` | client; then the evaluator's submitter (the keeper) |
 | `Withdrawable(address)` (`_withdrawable`) | persistent | J, of the job that credits it | on each credit, with the crediting job's end; `withdraw`/`withdraw_to` removes the key when it reaches zero | the crediting action's submitter; a holder whose balance was archived pays its restore on `withdraw` |
 | `HookWhitelisted(address)` (`_whitelistedHooks`) | persistent | G | on `set_hook_whitelist`; then the sweep | owner; keeper |
@@ -569,9 +574,8 @@ sponsor.
 
 | Key | Storage | Class | Extension rule | Payer |
 |---|---|---|---|---|
-| owner, pending owner; kernel, token, market, identity/reputation/validation registries; `compliance_module`, `screening`, `trusted_evaluator`, `min_reputation_budget`; `TtlConfig` | instance | — | instance rule | owner; keeper |
+| owner, pending owner; kernel, token, market, identity/reputation/validation registries; `compliance_module`, `screening`, `trusted_evaluator`, `min_reputation_budget`; the reputation and validation write switches; `TtlConfig` | instance | — | instance rule | owner; keeper |
 | `BoundAgent(job_id)` (`_boundAgentPlusOne`) | persistent | J | on `before_action(SUBMIT)` | provider |
-| `CommitmentAtFund(job_id)` (`_commitmentAtFund`) | persistent | J | on `before_action(FUND)`, and on its read in `complete` | client; keeper |
 | `ValidationOf(job_id)` (`_validationOf`) | persistent | J | on write | the action's submitter |
 | `Recorded(job_id)` (`_recorded`) | persistent | J | on `after_action`, `record_expiry` (after expiry `T` is usually 0: no extension) | keeper; expiry recorder |
 | EVM transient slots (`_checkedJob`, `_checkOutcome`, `_screenOutcome`, `_screenCommitment`) | none | — | not carried between transactions. How the before-action outcome reaches the after-action code is fixed with the call graph, not here | — |

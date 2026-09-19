@@ -182,13 +182,27 @@ ones: the port changes none of them. On top of these, every contract with an
 owner has `transfer_ownership` and `accept_ownership` from `square-common`
 ([below](#ownable-for-8-b1)).
 
+The port adds owner functions the EVM design did not have. Each needs the same
+"non-owner cannot call" test as the EVM ones:
+
+- **`set_ttl_config`** on every contract with an owner. It updates the stored
+  `TtlConfig` when the network's config drifts
+  ([fees-and-ttl.md](fees-and-ttl.md#seconds-to-ledgers-ttlconfig)).
+  `claim_market` has no owner, so its `TtlConfig` is fixed at construction.
+  `groth16_verifier` stores none.
+- **The reputation and validation write switches** in `square_hook`. They take
+  the advisory registry writes out of the settlement path if a registry starts
+  exhausting the budget
+  ([call-graph-on-soroban.md](call-graph-on-soroban.md#5-tolerant-hook-calls-what-a-hook-informs-it-never-vetoes-means-on-soroban)).
+  [#13][i13] fixes their names.
+
 | Contract (issue) | Owner functions (EVM source) | Delay or limit | `renounce_ownership` |
 |---|---|---|---|
 | `square_job` ([#9][i9]) | `set_fees` (`setFees`, L63), `set_hook_whitelist` (`setHookWhitelist`, L92), `skim` (`skim`, L75) | New fee bps apply after `FEE_NOTICE` = 1 day (L21), and a new call restarts the notice. The treasury changes immediately. `set_hook_whitelist` is immediate, and existing jobs keep their hook. `skim` moves only balance − total withdrawable − total escrowed. | enabled (EVM: inherited, not overridden) |
 | `keeper_evaluator` ([#14][i14]) | `configure_windows` (L40), `set_finalize_grace` (L44), `set_arbitration` (L49) | The window setters append a window that takes effect now; a job keeps the settlement horizon it snapshotted at creation. `set_arbitration` can be called once. | enabled |
 | `arbitration` ([#15][i15]) | `set_arbiters` (L48), `set_bond_parameters` (L63) | `set_arbiters` creates a new set version, and open disputes keep theirs. Limits: 1–255 arbiters, 0 < threshold ≤ n. `set_bond_parameters` is immediate and applies to future disputes only; bps ≤ 10 000. | enabled |
 | `claim_market` ([#16][i16]) | none: `ClaimMarket.sol` has no owner | — | — |
-| `square_hook` ([#13][i13]) | `set_compliance_module` (L119), `set_screening` (L129), `set_reputation_policy` (L134) | All immediate. A zero screening address removes screening. | enabled |
+| `square_hook` ([#13][i13]) | `set_compliance_module` (L119), `set_screening` (L129), `set_reputation_policy` (L134); new on Soroban: the reputation and validation write switches (above) | All immediate. A zero screening address removes screening. | enabled |
 | `compliance_module` ([#12][i12]) | `set_hook` (L228, refuses zero), `set_timestamp_tolerance` (L234) | immediate | enabled |
 | `groth16_verifier` ([#10][i10]) | none: `Groth16Verifier.sol` has no owner | — | — |
 | `policy_registry` ([#11][i11]) | `set_spender` (L193, refuses zero) | immediate. The owner cannot touch anyone's policy: `set_policy` and `set_buyer_root` are authorized by the poster. | **disabled** (L145) |
