@@ -173,7 +173,7 @@ merge.
 
 | | |
 |---|---|
-| Network | Stellar Testnet, Protocol 27 |
+| Network | Stellar Testnet, Protocol 27 ([docs/decisions/stellar-target.md](docs/decisions/stellar-target.md)) |
 | Network passphrase | `Test SDF Network ; September 2015` |
 | CAIP-2 | `stellar:testnet` |
 | RPC | `https://soroban-testnet.stellar.org` |
@@ -181,7 +181,7 @@ merge.
 | Friendbot | `https://friendbot.stellar.org` |
 | Explorer | `https://stellar.expert/explorer/testnet` |
 | Fee token | XLM (resource fees and inclusion fee) |
-| Payment token | USDC, issued natively by Circle: issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`, Stellar Asset Contract `***` (7 decimals) |
+| Payment token | USDC, issued natively by Circle: issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`, Stellar Asset Contract `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` (7 decimals) |
 | USDC from elsewhere | Circle's CCTP V2, Stellar domain `27`: burned on Ethereum, Base or Arbitrum Sepolia, attested by Circle, minted here through Circle's `CctpForwarder`, then funded into a job ([docs/design/cctp-funding.md](docs/design/cctp-funding.md)) |
 | 8004 registries | Identity `***`, Reputation `***`, Validation `***` |
 
