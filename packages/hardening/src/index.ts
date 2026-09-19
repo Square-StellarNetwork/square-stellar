@@ -65,30 +65,35 @@ export type {
 } from "./rateLimit.js";
 
 export {
+  NoUsableEndpointError,
   RpcEndpointCooldownError,
-  createFailoverTransport,
+  createFailoverRpc,
   isEndpointFailure,
   isPermanentRpcError,
   jitteredBackoffDelay,
   withRpcRetry,
 } from "./rpcFailover.js";
-export type { EndpointHealth, FailoverTransport, FailoverTransportOptions, RpcRetryOptions } from "./rpcFailover.js";
+export type { EndpointHealth, FailoverRpc, FailoverRpcOptions, RpcRetryOptions } from "./rpcFailover.js";
 
 export {
+  ActorMismatchError,
   DEFAULT_MAX_ACTION_LIFETIME_SECONDS,
   MEMORY_NONCE_PRUNE_INTERVAL_SECONDS,
+  SQUARE_ACTION_DOMAIN,
   SQUARE_ACTION_PRIMARY_TYPE,
-  SQUARE_ACTION_TYPES,
+  actionMessage,
   canonicalJson,
   currentUnixSeconds,
+  decodeSignature,
   memoryNonceStore,
   signAction,
-  squareActionDomain,
   verifyAction,
 } from "./signedMessages.js";
 export type {
+  ActionSigner,
   MemoryNonceStore,
   MemoryNonceStoreOptions,
+  MessageSigner,
   NonceStore,
   SquareAction,
   VerifyActionFailure,
