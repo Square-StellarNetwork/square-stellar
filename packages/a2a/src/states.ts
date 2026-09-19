@@ -35,10 +35,12 @@ export type TaskState = (typeof TaskState)[keyof typeof TaskState];
 /**
  * ERC-8183 job status, in the enum order the contract uses.
  *
- * Verified against the deployed registry on Arc Testnet
- * (0x0747EEf0706327138c69792bF28Cd525089e4583) rather than read off the ERC:
- * sampling the first forty jobs returns statuses 0, 1 and 3, which are Open,
- * Funded and Completed under this ordering and nothing else.
+ * The order was verified against the EVM registry deployed on Arc Testnet
+ * rather than read off the ERC: sampling the first forty jobs returned
+ * statuses 0, 1 and 3, which are Open, Funded and Completed under this
+ * ordering and nothing else. The Soroban kernel keeps the same six variants
+ * in the same order (docs/decisions/call-graph-on-soroban.md, `JobStatus`),
+ * so the mapping below holds on Stellar unchanged.
  */
 export const JobStatus = {
   Open: 0,

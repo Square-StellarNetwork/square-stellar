@@ -19,7 +19,7 @@ const result = await client.runTask(endpoint, {
   taskId: "t-1",
   capability: "text.summarize",
   input: "…",
-  callerDid: "did:aip:eip155:5042002:0x8004a818…bd9e:892271",
+  callerDid: "did:aip:stellar:testnet:C…:892271",   // did:aip v3 (#32); a v2 eip155 DID is carried the same way
   jobId: "42",                                     // the ERC-8183 job
 });
 

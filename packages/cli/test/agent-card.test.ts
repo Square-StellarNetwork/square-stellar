@@ -14,7 +14,7 @@ function example(name: string): unknown {
 describe("summarizeCard", () => {
   it("accepts the specification's own examples", () => {
     // If the CLI cannot read the cards the docs publish, one of the two is wrong.
-    for (const name of ["typical.json", "full.json"]) {
+    for (const name of ["typical.json", "full.json", "stellar.json"]) {
       const summary = summarizeCard(example(name), name);
       expect(summary.name).toBeTruthy();
       expect(summary.file).toBeTypeOf("object");

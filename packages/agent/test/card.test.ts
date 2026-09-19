@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { a2aEndpointOf, registrationFile, AIP_EXTENSION_TYPE, REGISTRATION_TYPE } from "../src/card.js";
+import { a2aEndpointOf, didVersionOf, registrationFile, AIP_EXTENSION_TYPE, REGISTRATION_TYPE } from "../src/card.js";
 
 /**
  * The card the agent serves is held to docs/agent-card/schema.json, the
@@ -52,6 +52,38 @@ describe("the registration file", () => {
     expect(card.registrations).toEqual([{ agentId: 7, agentRegistry: REGISTRY }]);
     expect(card.services).toContainEqual({ name: "A2A", endpoint: "https://atlas.example/a2a", version: "0.3.0" });
     expect(card.services).toContainEqual({ name: "DID", endpoint: base.did, version: "v2" });
+  });
+
+  it("validates a Stellar card: CAIP-2 registry and network, the USDC SAC as the token, a v3 DID", () => {
+    // The identity registry is the all-zero contract id until #33 fixes the deployment; the USDC SAC is testnet's.
+    const registry = "stellar:testnet:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+    const card = registrationFile({
+      ...base,
+      did: "did:aip:stellar:testnet:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4:7",
+      agentRegistry: registry,
+      token: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      network: "stellar:testnet",
+      capabilities: [{ id: "text.summarize", description: "Summarise a document.", price: "0.0500000" }],
+    });
+    const ok = validate(card);
+    expect(validate.errors ?? []).toEqual([]);
+    expect(ok).toBe(true);
+    expect(card.registrations).toEqual([{ agentId: 7, agentRegistry: registry }]);
+    expect(card.services).toContainEqual({ name: "DID", endpoint: "did:aip:stellar:testnet:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4:7", version: "v3" });
+    expect(card["x-aip"].capabilities[0]?.pricing).toEqual({ amount: "0.0500000", token: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA", network: "stellar:testnet" });
+  });
+
+  it("declares the DID version from its namespace, unless told otherwise", () => {
+    expect(didVersionOf("did:aip:stellar:testnet:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4:7")).toBe("v3");
+    expect(didVersionOf(base.did)).toBe("v2");
+    const card = registrationFile({ ...base, didVersion: "v3", capabilities: [{ id: "a", description: "b" }] });
+    expect(card.services).toContainEqual({ name: "DID", endpoint: base.did, version: "v3" });
+  });
+
+  it("is refused by the schema with a Stellar registry that is not CAIP-2, as the 8004 registries label it", () => {
+    const card = registrationFile({ ...base, agentRegistry: "stellar:mainnet:CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA", capabilities: [{ id: "a", description: "b" }] });
+    expect(validate(card)).toBe(false);
+    expect(validate.errors?.some((error) => error.instancePath === "/registrations/0/agentRegistry")).toBe(true);
   });
 
   it("points the A2A service at /a2a on the agent's origin, whatever path the url carried", () => {

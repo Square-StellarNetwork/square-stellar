@@ -11,6 +11,16 @@ export const AIP_EXTENSION_TYPE = "https://github.com/Square-StellarNetwork/squa
 
 export type AgentType = "LLM" | "Task" | "Execution";
 
+export type DidVersion = "v2" | "v3";
+
+/**
+ * `did:aip` v2 identifies an agent on an eip155 chain, v3 on a Stellar
+ * network (#32). The namespace after `did:aip:` says which.
+ */
+export function didVersionOf(did: string): DidVersion {
+  return did.startsWith("did:aip:stellar:") ? "v3" : "v2";
+}
+
 export interface CardCapability {
   id: string;
   description: string;
@@ -23,13 +33,16 @@ export interface CardOptions {
   description: string;
   /** Where the agent answers, origin only: `https://atlas.example`. */
   url: string;
+  /** `did:aip:stellar:testnet:C…:<agentId>` (v3, #32) or `did:aip:eip155:<chainId>:0x…:<agentId>` (v2). */
   did: string;
+  /** The version the DID service entry declares; read off the DID's namespace when omitted. */
+  didVersion?: DidVersion | undefined;
   agentId: bigint;
-  /** `eip155:<chainId>:<identity registry, lowercase>` */
+  /** `stellar:testnet:<identity registry, C…>`, or `eip155:<chainId>:<identity registry, lowercase>`. */
   agentRegistry: string;
-  /** Lowercase ERC-20 address the prices are in. */
+  /** The token the prices are in: the USDC Stellar Asset Contract (`C…`), or a lowercase ERC-20 address. */
   token: string;
-  /** CAIP-2, `eip155:<chainId>`. */
+  /** CAIP-2: `stellar:testnet`, `stellar:pubnet`, or `eip155:<chainId>`. */
   network: string;
   capabilities: readonly CardCapability[];
   agentType?: AgentType | undefined;
@@ -81,7 +94,7 @@ export function registrationFile(options: CardOptions): RegistrationFile {
     ...(options.image !== undefined ? { image: options.image } : {}),
     services: [
       { name: "A2A", endpoint: a2aEndpointOf(options.url), version: "0.3.0" },
-      { name: "DID", endpoint: options.did, version: "v2" },
+      { name: "DID", endpoint: options.did, version: options.didVersion ?? didVersionOf(options.did) },
       { name: "web", endpoint: new URL(options.url).origin + "/" },
     ],
     x402Support: options.x402Support ?? false,
