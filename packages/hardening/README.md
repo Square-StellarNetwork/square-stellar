@@ -20,7 +20,7 @@ this package derives from any other codebase. License: Apache-2.0.
 ## Install
 
 ```bash
-npm install @squaresdk/hardening @stellar/stellar-sdk hono   # once the v0.1.0 tag is on npm (square#356)
+npm install @squaresdk/hardening hono   # once the v0.1.0 tag is on npm (square#356)
 ```
 
 Not on npm yet: the packages publish under `@squaresdk` from a `v<version>` tag
@@ -31,12 +31,13 @@ and the first has not been cut. Until then, from this repository, after
 ```bash
 (cd packages/data && npm install && npm run build)
 (cd packages/hardening && npm install --install-links && npm run build)
-npm install ../path/to/square/packages/hardening @stellar/stellar-sdk hono
+npm install ../path/to/square/packages/hardening hono
 ```
 
-`@stellar/stellar-sdk` (pinned to the version [docs/decisions/stellar-target.md](../../docs/decisions/stellar-target.md)
-fixes) and `hono` are peer dependencies. The SDK backs the RPC failover and SEP-53 signing; `hono` is only
-needed for the two middleware factories. `undici` is a regular dependency because the SSRF-safe fetch needs a
+`hono` is a peer dependency, only needed for the two middleware factories. `@stellar/stellar-sdk`, pinned to the
+version [docs/decisions/stellar-target.md](../../docs/decisions/stellar-target.md) fixes, is a regular dependency:
+it backs the RPC failover and SEP-53 signing, and a service that imports this package for its SSRF-safe fetch alone
+must not have to install it by hand. `undici` is a regular dependency because the SSRF-safe fetch needs a
 connector whose address resolution can be pinned.
 
 Node 20 or newer.
