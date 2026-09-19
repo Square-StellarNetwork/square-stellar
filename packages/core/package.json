@@ -35,6 +35,7 @@
     "check:bindings": "node scripts/generate-bindings.mjs --check",
     "check:events": "node scripts/check-events-documented.mjs",
     "check:selectors": "node scripts/check-deployed-selectors.mjs",
+    "check:deployed-wasm": "node scripts/check-deployed-wasm.mjs",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:anvil": "ANVIL=1 vitest run",
