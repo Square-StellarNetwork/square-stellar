@@ -12,3 +12,8 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+square-test-support = { workspace = true }
+serde_json = "1"

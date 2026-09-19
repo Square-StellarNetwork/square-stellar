@@ -1,0 +1,17 @@
+{
+  "name": "square-test-support-scripts",
+  "private": true,
+  "description": "Writes contracts/test-support/vectors.json: the keccak preimages and Merkle proofs the contracts and packages/core must agree on.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "vectors": "node scripts/vectors.mjs",
+    "vectors:check": "node scripts/vectors.mjs --check"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "@stellar/stellar-sdk": "16.3.0"
+  }
+}

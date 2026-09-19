@@ -1,0 +1,228 @@
+{
+  "_about": "Byte layouts of contracts/common/src/hash.rs, computed by contracts/test-support/scripts/vectors.mjs with @noble/hashes keccak256 and @stellar/stellar-sdk XDR. Derived inputs are sha256(label) of the label named in the script.",
+  "layouts": {
+    "finalize_reason": "keccak256(\"square.finalize.v1\" || job_id u64 BE || deliverable 32)",
+    "resolution_hash": "keccak256(\"square.resolution.v1\" || job_id u64 BE || outcome u32 BE || provider_bps u32 BE); outcome None=0 Complete=1 Reject=2 Lapsed=3",
+    "statement_hash": "keccak256(8 x 32-byte big-endian signals)",
+    "buyer_leaf": "keccak256(keccak256(XDR(ScAddress(buyer)) || salt 32))",
+    "merkle": "sorted leaves; parent = keccak256(min || max); odd node carried up",
+    "address_field": "f(addr) = 0x00 || sha256(XDR(ScVal::Address(addr)))[0..31]",
+    "evidence_hash": "keccak256(\"square.evidence.v1\" || job_id u64 BE || XDR(ScAddress(payee)) || amount i128 BE || XDR(ScAddress(token)) || (0x00 | 0x01 || screening 32) || compliance_outcome u32 BE || screening_outcome u32 BE); NotRun=0 Passed=1 Failed=2"
+  },
+  "address_field": [
+    {
+      "name": "usdc_issuer_testnet",
+      "address": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "signal": "0038622f1b6bed4428f007d87a0699c11bd471da6079d3bd54389565e67ca04c"
+    },
+    {
+      "name": "usdc_sac_testnet",
+      "address": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "signal": "00f3f621aaa28a2f21130f183b450020ee2016bb79edd9fdaf15bf5ecba4f002"
+    },
+    {
+      "name": "usdc_issuer_pubnet",
+      "address": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "signal": "0057eb773202bd4b5e3528a821ff15a929aa379bf9b7e2943818c97ba7416e9a"
+    },
+    {
+      "name": "usdc_sac_pubnet",
+      "address": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "signal": "006dab8a377286236a25f018858be3b5d64045f87af64269d10dac584f6cf5ef"
+    }
+  ],
+  "finalize_reason": [
+    {
+      "job_id": "0",
+      "deliverable": "b37c876c595f4a6378e8c3f2dbda1763532f87393fbc1b2616ead74338b30b01",
+      "reason": "45a60348c12f62b4c25356251164f13973377ab27e9d6a081088d00b503e25ee"
+    },
+    {
+      "job_id": "1",
+      "deliverable": "ec588702398ec925c7a27d8bd5dc1062673cf720cd22af765b40e8b195c2baab",
+      "reason": "92b49876648e1f00cb239d1d8c1fcfea0fc33c9527fa6bc95d74950f295ab706"
+    },
+    {
+      "job_id": "18446744073709551615",
+      "deliverable": "d42b8f885a31981320c311f9b187b2001f4156c0faa1a40706ca8cfc0abd1e37",
+      "reason": "c18aa2a6f1f3dc5eb9b216eb944a8ba7e83b0de8336cd52feaf7e58e6a563cac"
+    }
+  ],
+  "resolution_hash": [
+    {
+      "job_id": "7",
+      "outcome": "None",
+      "provider_bps": 0,
+      "hash": "a032d95febe1fd8f7d9fc8a770f3ca5116ae1a63be0ee67509e0f08c3952b5b9"
+    },
+    {
+      "job_id": "7",
+      "outcome": "None",
+      "provider_bps": 5000,
+      "hash": "398a57d86d53bdeff30acfc7868cb388517e34c27f15dde3a14ef8749ba33399"
+    },
+    {
+      "job_id": "7",
+      "outcome": "None",
+      "provider_bps": 10000,
+      "hash": "8d9bb41973e889130f9fe99b4b154100b3ae6498d3c5396dfed54a2d2ce60d4d"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Complete",
+      "provider_bps": 0,
+      "hash": "4338e455d0f8e7c27c22fc6b20c32604ec80ebae9f11ef0fbb69c709090d8334"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Complete",
+      "provider_bps": 5000,
+      "hash": "abe8acc8e2dd1b69812772b19c6f2f0bddc8b8f565509cfe9fb88971bdaba7b1"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Complete",
+      "provider_bps": 10000,
+      "hash": "85655132c4224feb2b0a8e9e26ee33d0e5fc884a9f5fcb5405d64f972c73fd2a"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Reject",
+      "provider_bps": 0,
+      "hash": "9b832e2ed49ad37943590930b6c385700e0635e35bce83beb9c32aaad74c66f1"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Reject",
+      "provider_bps": 5000,
+      "hash": "90a05ff8d2802f5fbdbcb1ddcedd41a94bdb5afbc72ffa057b2978c4bfc70633"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Reject",
+      "provider_bps": 10000,
+      "hash": "3444198b373d4c5f907d0427d8183a8ec30caaec4fcec078c7de45c8dfba5647"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Lapsed",
+      "provider_bps": 0,
+      "hash": "031d2d4416b4496d636d608bc4ce3cead9dabe9814bd2732ea23bcde5170aed7"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Lapsed",
+      "provider_bps": 5000,
+      "hash": "416965692659fe93759bd1259a9a8c144a15ed0aa65ee3ff4c1eec68ef012a98"
+    },
+    {
+      "job_id": "7",
+      "outcome": "Lapsed",
+      "provider_bps": 10000,
+      "hash": "d7826963346b372596e962074575fefd508d4096ad2a2bc54278ddb6f71f583b"
+    }
+  ],
+  "statement_hash": {
+    "signals": "29a7ad6638584f82606835e3e43dfba103140695d6fcf6279a7e4343061892521d5db7f319013e68d5487f49e4d21949277778d12b3523187597ac448cf1ec08298cb4b284b6635fa863eeb16fca50e2cb7ca6d256a7238f387dadb6cb37a7df03692a85a9d246f4fe4b72e5a2a28d5d8211ad4dbad65f298c6cc0b7a11f92541cf2bb4eda2548045058c15bed9cc0e252efea6f606e09c7c6d265ed874aa9b90200fea1da12c8c69f446c4cd84bdfbdbebc3cd710cc0735c070ccb6b130520c26dfcecc76180aae09d3c717c855135d77d2246945be9b23c09c5f6f252a795d173c8c73904f672ea1f0851adb3ea9b284caa4260b425295882690b2c5b03ec0",
+    "hash": "799608df297f12885f9bd81b2e25c9e7e5679b7c4a8bc5c02c5e80129e856dff"
+  },
+  "buyer_leaf": [
+    {
+      "name": "usdc_issuer_testnet",
+      "buyer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "sc_address_xdr": "0000000000000000423e7d05f2ecafbfec192b215a3f1be96aedb8d8e70254abe3413e0207de56b2",
+      "salt": "9780496417d662059e9474aea32eff1a44f1358a85f86fff37811bc5439b95e9",
+      "leaf": "3c81aa3bab808a9f35c84f3ddba01a20ff5505b203bf116e0615187a38af1a5a"
+    },
+    {
+      "name": "usdc_sac_testnet",
+      "buyer": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "sc_address_xdr": "000000015045cd5ec0729a768fd5ad02505852df4f028dce830e5ac52209ba48483b2f01",
+      "salt": "b309f482bbf116f5f431c75616e2aaf1a66fec7a2ecc0a6f67e1cc5911d39365",
+      "leaf": "3ce9b9d217be09f01bbc69e9f04ab2f6fd93e8ba94f81e4664093d5c800008bb"
+    },
+    {
+      "name": "usdc_issuer_pubnet",
+      "buyer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "sc_address_xdr": "00000000000000003b9911380efe988ba0a8900eb1cfe44f366f7dbe946bed077240f7f624df15c5",
+      "salt": "b1704c7fb0b81670943e95aac4f559d55bf35262b5629ee22eefa06a45173943",
+      "leaf": "f2ba105cde5638d7ee6283ce4bb909fac55b409fe953808792efc4c2dbeca760"
+    },
+    {
+      "name": "usdc_sac_pubnet",
+      "buyer": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "sc_address_xdr": "00000001adefce59aee52968f76061d494c2525b75659fa4296a65f499ef29e56477e496",
+      "salt": "3f241e0726cd329f2ac72ca480756e76df430459c842c158221870d6e3683f74",
+      "leaf": "4b57057be881b9422cda9d42f21d522dc340543fccfb840ac178c5fd6436600f"
+    }
+  ],
+  "merkle": {
+    "root": "430ecf2a258b0969666d491277bc2c3266973b8b52f8b1e42292aabe01319a1f",
+    "proofs": [
+      {
+        "buyer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "leaf": "3c81aa3bab808a9f35c84f3ddba01a20ff5505b203bf116e0615187a38af1a5a",
+        "proof": [
+          "3ce9b9d217be09f01bbc69e9f04ab2f6fd93e8ba94f81e4664093d5c800008bb",
+          "d225eb22434a2d92b54719341da9ee0f771748480f4809181f40596c31f9fcff"
+        ]
+      },
+      {
+        "buyer": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+        "leaf": "3ce9b9d217be09f01bbc69e9f04ab2f6fd93e8ba94f81e4664093d5c800008bb",
+        "proof": [
+          "3c81aa3bab808a9f35c84f3ddba01a20ff5505b203bf116e0615187a38af1a5a",
+          "d225eb22434a2d92b54719341da9ee0f771748480f4809181f40596c31f9fcff"
+        ]
+      },
+      {
+        "buyer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "leaf": "f2ba105cde5638d7ee6283ce4bb909fac55b409fe953808792efc4c2dbeca760",
+        "proof": [
+          "4b57057be881b9422cda9d42f21d522dc340543fccfb840ac178c5fd6436600f",
+          "071fa695c20e0f4deeece1f3f69138cf3d662db0f668ac8981318241bf2c6009"
+        ]
+      },
+      {
+        "buyer": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+        "leaf": "4b57057be881b9422cda9d42f21d522dc340543fccfb840ac178c5fd6436600f",
+        "proof": [
+          "f2ba105cde5638d7ee6283ce4bb909fac55b409fe953808792efc4c2dbeca760",
+          "071fa695c20e0f4deeece1f3f69138cf3d662db0f668ac8981318241bf2c6009"
+        ]
+      }
+    ]
+  },
+  "evidence_hash": [
+    {
+      "job_id": "3",
+      "payee": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": "49250000",
+      "asset": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "screening": "aaf428daa65ed3c0acc4b4a21b1577e6e23f0177a243e8d53464a61f57e4f8f8",
+      "compliance_outcome": "Passed",
+      "screening_outcome": "Passed",
+      "commitment": "ad91e0c9eb51a02ff231ff7d4d32232027ef5b0825f31cb6cd3e2ae3b6810e06"
+    },
+    {
+      "job_id": "4",
+      "payee": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "amount": "0",
+      "asset": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "screening": null,
+      "compliance_outcome": "NotRun",
+      "screening_outcome": "NotRun",
+      "commitment": "8a0516f3454ca43e39951307ab48a398c29c5c40746df825728e686890058781"
+    },
+    {
+      "job_id": "5",
+      "payee": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "amount": "170141183460469231731687303715884105727",
+      "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "screening": "01f5382b44fab0b17fc2c68d0df92b866d3dbdb24438a9f1b5a69620d42adb16",
+      "compliance_outcome": "Failed",
+      "screening_outcome": "Failed",
+      "commitment": "22446fb6c15ed3dc326f5a4cc61cbdb0c5f9778b9a62ad60619bacf6ccec6fd6"
+    }
+  ]
+}

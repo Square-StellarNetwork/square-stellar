@@ -1817,14 +1817,19 @@ dependencies = [
 name = "square-common"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "soroban-sdk",
+ "square-test-support",
 ]
 
 [[package]]
 name = "square-test-support"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
+ "sha2",
  "soroban-sdk",
+ "square-common",
 ]
 
 [[package]]

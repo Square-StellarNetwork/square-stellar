@@ -26,9 +26,27 @@ publish = false
 rust-version = "1.91.0"
 
 [workspace.dependencies]
-soroban-sdk = "=27.0.6"
+# `experimental_spec_shaking_v2`: `common` defines every contract's types,
+# errors and events, and without it each Wasm's spec would carry all of them
+# (nine error enums with overlapping codes among them). With it, the SDK marks
+# what a contract uses at its boundary and `stellar contract build` strips the
+# rest, so each spec, and the bindings generated from it, holds that
+# contract's own interface only (docs/design/storage-and-events.md).
+soroban-sdk = { version = "=27.0.6", features = ["experimental_spec_shaking_v2"] }
 square-common = { path = "common" }
 square-test-support = { path = "test-support" }
+# The nine contracts, for the tests of the contracts that call them.
+arbitration = { path = "contracts/arbitration" }
+claim_market = { path = "contracts/claim_market" }
+compliance_module = { path = "contracts/compliance_module" }
+groth16_verifier = { path = "contracts/groth16_verifier" }
+keeper_evaluator = { path = "contracts/keeper_evaluator" }
+policy_registry = { path = "contracts/policy_registry" }
+screening_registry = { path = "contracts/screening_registry" }
+square_hook = { path = "contracts/square_hook" }
+square_job = { path = "contracts/square_job" }
+# Property tests: the invariants of #18 run at least 256 cases each.
+proptest = "=1.11.0"
 
 # The profile Soroban's own examples ship with: smallest code, no panics that
 # unwind, one codegen unit and LTO so the same source gives the same bytes.

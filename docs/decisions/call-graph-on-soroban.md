@@ -182,8 +182,11 @@ fn resolve_payout(env: Env, ctx: HookContext, params: CompleteParams) -> (Addres
   final status, the payee and the split.
 
 On `complete`, the context passed to `before_action` and `after_action`
-carries `payout`: the payee, split and shares the kernel is about to credit,
-or has credited.
+carries `payout: PayoutStatus::Resolved(..)`: the payee, split and shares the
+kernel is about to credit, or has credited. Every other context carries
+`PayoutStatus::Unresolved`. The field is an enum and not `Option<Payout>`
+because the SDK's test build converts an `Option<T>` field to XDR only when
+`T: Into<ScVal>`, and a contract type is not.
 
 **What replaces the transient storage.** The EVM hook used `transient`
 fields (`_checkedJob`, `_checkOutcome`, `_screenOutcome`, `_screenCommitment`,
@@ -763,8 +766,9 @@ use soroban_sdk::{contractclient, contracttype, Address, Bytes, BytesN, Env, Sym
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JobStatus { Open, Funded, Submitted, Completed, Rejected, Expired }
 
-/// The split the kernel credits on `complete`. Present in the context of
-/// `before_action` and `after_action` for `Complete`; `None` otherwise.
+/// The split the kernel credits on `complete`. `PayoutStatus::Resolved` in
+/// the context of `before_action` and `after_action` for `Complete`;
+/// `Unresolved` otherwise.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Payout {
@@ -792,8 +796,12 @@ pub struct HookContext {
     pub submitted_at: u64,                // 0 until submitted
     pub compliance_proof: Bytes,          // empty when none bound
     pub commitment_at_fund: Option<BytesN<32>>,
-    pub payout: Option<Payout>,
+    pub payout: PayoutStatus,
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PayoutStatus { Unresolved, Resolved(Payout) }
 
 /// Caller-supplied parameters of `submit`. Replaces
 /// `abi.encode(uint256 agentId, bytes32 requestHash)`.

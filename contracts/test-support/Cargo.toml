@@ -1,6 +1,6 @@
 [package]
 name = "square-test-support"
-description = "Test-only mocks: token, 8004 registries, hostile hooks (B11, #18)."
+description = "What the contracts' tests stand on (B1, #8): real ed25519 accounts and signed authorization, USDC on the host's own Stellar Asset Contract, and the adversarial hooks of docs/decisions/call-graph-on-soroban.md."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,3 +12,7 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+square-common = { workspace = true }
+ed25519-dalek = "2.2.0"
+sha2 = "0.10.9"
+
