@@ -4,7 +4,6 @@
     "contexts": [
       "build, test, gas",
       "@squaresdk/core against anvil",
-      "verifies on Arc Testnet",
       "circuits",
       "prover (real proving key)",
       "services/prover (hermetic)",

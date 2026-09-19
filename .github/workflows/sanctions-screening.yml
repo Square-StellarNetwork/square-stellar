@@ -8,8 +8,8 @@ name: sanctions screening
 # records nothing.
 #
 # It reaches TRM's keyless tier, 100 requests a day, and a run makes about ten.
-# That is why it lives in its own workflow with a path filter, as
-# arc-acceptance.yml does, and is not a required check: its red can be a
+# That is why it lives in its own workflow with a path filter and is not
+# a required check: its red can be a
 # statement about TRM answering rather than about the change. docs/ci.md has
 # the row.
 

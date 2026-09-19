@@ -15,10 +15,8 @@ pull request.
 |---|---|
 | `build, test, gas` | The whole Foundry suite, `forge build --sizes`, a gas report on the pull request and a coverage table on the run summary. |
 | `@squaresdk/core against anvil` | The SDK drives all five settlement paths against a locally deployed stack, and the committed ABI modules match a fresh `forge build` and document every event they declare. |
-| `verifies on Arc Testnet` | A proof the prover produced verifies against Arc's own `0x06`/`0x07`/`0x08`, not revm's. |
 | `circuits` | `payment.circom` compiles, a proving key builds, and the whole constraint suite runs against them. The ceremony's pinned drand quicknet chain hash and group key are checked against `api.drand.sh` itself. How many tests passed is on the run summary, not in this table: a count written by hand here drifts the moment a test is added. |
 | `prover (real proving key)` | The prover agrees with the circuit, and its Solidity calldata matches `snarkjs`. |
-| `end-to-end (policy → proof → Arc)` | A policy, a proof built from it, and Arc accepting that proof — not from a fixture. **Not required**, see below. |
 | `refuse and replay (policy → proof → anvil)` | A payment over the policy's ceiling is proved, verified, and still pays the provider nothing; a compliant payment is released once and then refused on replay — as the same bytes and as a re-randomised copy. Every refusal is asserted by the module's own reason. **Not required**, see below. |
 | `six refusal scenarios (policy → proof → anvil)` | The six scenarios of #28 against a stack the run deploys itself, waiting out a real challenge window: a compliant payment is released, and a payment over the daily cap, to a blocked recipient, against a replaced policy, outside its time window, or carrying another job's proof is refused, each by the module's own reason. The same script runs on Arc; see `six refusal scenarios (Arc Testnet, funded key)` below. **Not required**, see below. |
 | `services/prover (hermetic)` | The rule evaluator and the encoding with no artifacts — a contributor's `npm test`. |
@@ -38,35 +36,26 @@ pull request.
 | `pack and install (dry run)` | The thirteen `@squaresdk` packages build in dependency order and pack, each tarball carries its `dist/`, its bins, its README and the license and nothing outside `files`, none says `file:` for a sibling, and all thirteen install together into an empty project where every library imports and the four binaries answer ([docs/decisions/distribution-channel.md](decisions/distribution-channel.md)). On a `v<version>` tag the same workflow goes on to publish. **Not required**, see below. |
 | `secret scan`, `forbidden strings` | No secrets, and no disclosure wording has gone missing. A red `secret scan` names the rule, the file and the line in the job log: gitleaks runs with `--verbose`, and with `--redact` beside it the value itself is never printed. It walks the git history, so the finding can sit in a commit the diff no longer shows. |
 
-Eleven are **not** required to merge. Six of them are not required because their
-red is a statement about Arc Testnet being reachable, TRM's sanctions API
-answering, or a funded account, rather than about the change, and an outside
-service having a bad afternoon should not block unrelated work. The other five,
-`refuse and replay`, `six refusal scenarios (policy → proof → anvil)`,
+Seven are **not** required to merge. Two of them are not required because their
+red can be a statement about an outside service rather than about the change —
+the RPC `packages/aa (anvil)` forks from, or TRM's sanctions API answering — and
+an outside service having a bad afternoon should not block unrelated work. The
+other five, `refuse and replay`, `six refusal scenarios (policy → proof → anvil)`,
 `did-aip-driver version`, `services/screener (anvil)` and
 `pack and install (dry run)`, reach no network and are not required only
-because they are new. `deployed selectors (Arc Testnet)` is a twelfth, red on
-purpose until the redeploy (`docs/deploy/README.md`).
+because they are new.
 
 | Check | Why it is not required |
 |---|---|
-| `end-to-end (Arc Testnet)` | Resolves the permanent smoke agents against the live registry. |
-| `end-to-end (policy → proof → Arc)` | New, and it reaches Arc. Promote it once it has run without flaking, the way `verifies on Arc Testnet` was. Adding it to the required set means re-applying `branch-protection.json`, in the same order: merge first, then the command. |
-| `refuse and replay (policy → proof → anvil)` | New. Unlike the row above it reaches no network beyond the ptau fetch every circuit job makes, so its red is a statement about the change — which makes it the better candidate for promotion. Same rule: once it has run without flaking, merge first, then re-apply `branch-protection.json`. |
+| `refuse and replay (policy → proof → anvil)` | New. It reaches no network beyond the ptau fetch every circuit job makes, so its red is a statement about the change. Promote it once it has run without flaking: adding it to the required set means re-applying `branch-protection.json`, merge first, then the command. |
 | `six refusal scenarios (policy → proof → anvil)` | New, and hermetic like the row above apart from the same ptau fetch. Promote it the same way. |
 | `did-aip-driver version` | New, and hermetic: a `git diff` against the base branch and two `package.json` reads. Its red means an image input changed without a version bump. Promote it the same way once it has run a while. |
 | `packages/aa (anvil)` | Named for a local chain, but `test/globalSetup.ts` calls `startAnvilFork()`, which defaults to `https://rpc.testnet.arc.io` (`scripts/fork.ts:144`) with no override and no fallback, and rethrows on failure. Arc being down would block a documentation pull request. |
-| `acceptance (Arc Testnet, funded key)` | Spends real testnet gas, needs a secret, does not run on fork pull requests, and lives in its own path-filtered workflow. |
-| `six refusal scenarios (Arc Testnet, funded key)` | #28's six scenarios on Arc itself. Spends real testnet USDC: the first run on Arc was 26.2M gas and cost its funder 0.588 USDC. Needs `SCENARIO_FUNDER_PRIVATE_KEY` and refuses to start without it or on a short balance. Lives in its own workflow (`arc-refusal-scenarios.yml`) and runs on pushes to `main`, by hand, and on same-repository pull requests that change the script or the workflow, one run at a time. |
 | `services/screener (anvil)` | New. Like the rest of its matrix it reaches nothing but the anvil the job starts; the live tests against TRM are skipped here by design and run in the row below. Promote it the same way. |
 | `pack and install (dry run)` | New, and hermetic apart from the registry fetch of the packages' own dependencies: thirteen builds, thirteen packs, one install of the tarballs. Its red means a package would ship broken. Promote it the same way once it has run a while. |
 | `sanctions screening (TRM → anvil)` | #35's screener against TRM's real sanctions API, and the end-to-end run with OFAC-listed addresses against the real hook. TRM's keyless tier allows 100 requests a day and a run makes about ten, so a red can mean TRM did not answer. Lives in its own path-filtered workflow (`sanctions-screening.yml`). |
 
-`verifies on Arc Testnet` also depends on Arc's RPC, but it is cheap, read-only
-and defends a claim the README makes, so it is required. If it turns out to
-flake, move it to the list above rather than deleting it.
-
-`circuits` depends on drand the same way, for the same reason (square#260). Its
+`circuits` depends on drand, and is required anyway (square#260). Its
 step `The drand pin, against the live chain` sends two free GETs to
 `api.drand.sh` and holds the chain hash and group key pinned in
 `circuits/scripts/ceremony.mjs` to what drand serves. The ceremony's beacon rests
@@ -103,10 +92,10 @@ next instance of this hides:
 | `!forkUrl` | `packages/core/test/fork.test.ts` | `@squaresdk/core against anvil` | **not satisfied.** `ARC_FORK_RPC_URL` is set by no workflow, so the lifecycle has never been exercised against the real ERC-8004 registries in CI. Named on the run summary so the gap is visible. |
 | `!forkUrl` | `packages/core/test/cctp.fork.test.ts` | `@squaresdk/core against anvil` | **not satisfied**, the same way: `CCTP_SEPOLIA_FORK_RPC_URL` is set by no workflow, so the burn against Circle's real `TokenMessengerV2` (square#32) runs only where someone starts a Sepolia fork. The hermetic half, `test/cctp.test.ts`, runs everywhere. |
 | `!configured` | `packages/x402/test/live.test.ts` | `packages/x402 (anvil)` | **not satisfied.** Needs `ARC_TESTNET_RPC_URL` and two funded keys. |
-| `!process.env.LIVE` | `packages/did-resolver/test/integration.test.ts` | `cli` | **not satisfied, by design.** `cli` is hermetic; the live reads run in `end-to-end (Arc Testnet)`. |
+| `!process.env.LIVE` | `packages/did-resolver/test/integration.test.ts` | `cli` | **not satisfied, by design.** `cli` is hermetic, and no job runs the live reads. |
 | `!process.env.LIVE` | `services/screener/test/live.test.ts` | `sanctions screening (TRM → anvil)` | satisfied there, which runs `test:live`. Skipped in `services/screener (anvil)` by design, which is hermetic. |
-| `!live`, `!funded` | `packages/cli/test/live.test.ts` | `acceptance (Arc Testnet, funded key)` | satisfied there, which runs `npm run test:live`. The reads need only `LIVE=1`; the registration also needs `SQUARE_PRIVATE_KEY`, so it runs on pushes to `main` and same-repository pull requests and skips itself, named on the run summary, where the secret is absent. The job is path-filtered and not required. Skipped in `cli` by design, which is hermetic. |
-| `!process.env.SMOKE` | `packages/cli/test/smoke.test.ts` | `end-to-end (Arc Testnet)` | satisfied there, which runs `npm run test:smoke`. Skipped in `cli` by design. |
+| `!live`, `!funded` | `packages/cli/test/live.test.ts` | `cli` | **not satisfied, by design.** `cli` is hermetic, and no job sets `LIVE=1` or a funded key. |
+| `!process.env.SMOKE` | `packages/cli/test/smoke.test.ts` | `cli` | **not satisfied, by design.** `cli` is hermetic, and no job runs `test:smoke`. |
 | `!("stack" in ready)`, `notReady !== null` | `packages/policy/test/anvil.test.ts`, `packages/cli/test/policy.anvil.test.ts`, `packages/mcp/test/compliance.test.ts`, `packages/hosted/test/compliance.test.ts` | `policy → proof → release (anvil, every surface)` | satisfied — the job installs the module and copies the key's files the suites prove with, and asserts both before the suites run. In `mcp (anvil)`, `hosted (anvil)` and `cli` the two compliance suites skip by design: those stacks hold no module. |
 | `!proverInstalled` | `packages/policy/test/commitment.test.ts` (the cross-check against the prover), `packages/policy/test/local-prover.test.ts` (the local prover's circuit input and rule names against the prover's) | `packages/policy`, `policy → proof → release` | satisfied in the second, where the prover is installed; skipped in the first, by design. |
 | `!haveArtifacts` | `packages/policy/test/local-prover.test.ts` (a real proof made in the test's process, checked against `payment_vk.json`, and a verification key from another key refused) | `policy → proof → release` | satisfied — the job copies `payment.wasm`, `payment.zkey` and `payment_vk.json` to `services/prover/artifacts`. Skipped in `packages/policy`, by design, which builds no circuit. |
@@ -160,8 +149,8 @@ So, two mechanisms:
    visible without reading logs.
 
    It runs in `circuits`, `prover (real proving key)`, `did-aip-driver (unit)`,
-   `@squaresdk/core against anvil`, the four `(anvil)` matrix jobs, and
-   `acceptance (Arc Testnet, funded key)`. The rest do not have one.
+   `@squaresdk/core against anvil` and the `(anvil)` matrix jobs. The rest do
+   not have one.
 
 `services/prover (hermetic)` in `packages.yml` is the no-artifacts run and is
 kept: it is the contributor's `npm test` and it should stay green. It is not a
@@ -250,35 +239,14 @@ number chosen here would be an invented one.
 
 ## Secrets and variables
 
-Nothing in the required set needs any of these. All are optional and all are
-read only by jobs already restricted to this repository.
-
-| Name | Kind | Used by | Effect when unset |
-|---|---|---|---|
-| `SQUARE_PRIVATE_KEY` | secret | `acceptance (Arc Testnet, funded key)` | The reads and the `eth_call` dry run still execute; the registration suite skips itself and the run summary names it. |
-| `SCENARIO_FUNDER_PRIVATE_KEY` | secret | `six refusal scenarios (Arc Testnet, funded key)` | The script refuses to start and says why, so the run is red rather than green over nothing. It is the account that deploys, owns, funds and cranks the run; it needs roughly the gas of one run plus the jobs' budgets, and the script checks that before it spends anything. |
-| `ARC_VERIFIER_ADDRESS` | variable | `verifies on Arc Testnet` | The deployed verifier is not checked. The state-override check, which needs no deployment, still runs. |
-| `NPM_TOKEN` | secret | `publish to npm` (a `v<version>` tag) | The job says the token is not set and publishes nothing; the dry run before it still runs. It is the token of the account that owns the `@squaresdk` scope, which [docs/decisions/distribution-channel.md](decisions/distribution-channel.md) leaves to the project to name. |
-
-`ARC_VERIFIER_ADDRESS` is a variable rather than a line in the workflow because
-the address is temporary: [#16](https://github.com/Square-StellarNetwork/square/issues/16)
-produces a new proving key, and therefore a new verifier at a new address.
+No workflow reads a repository secret or variable other than the built-in
+`GITHUB_TOKEN`. The jobs that did were removed: the ones that reached Arc Testnet
+with a funded key or a deployed address, and the ones that deployed to Vercel,
+redeployed Railway or published to npm with the previous team's accounts.
 
 ### Fork pull requests
 
-`acceptance (Arc Testnet, funded key)` and `six refusal scenarios (Arc Testnet,
-funded key)` are the jobs that need a secret, and both are guarded so they do
-not run on a pull request from a fork:
-
-```yaml
-if: >-
-  github.event_name != 'pull_request' ||
-  github.event.pull_request.head.repo.full_name == github.repository
-```
-
-A fork's `pull_request` run gets no secrets, so the job would fail rather than
-skip, and a first-time contributor would see a red check they have no way to
-fix. Everything else — including both read-only Arc checks — runs on forks.
+No job needs a secret, so every job runs on a pull request from a fork.
 
 The gas comment in `contracts.yml` is subject to the same limit from the other
 side: a fork's `pull_request` run gets a read-only token whatever the
@@ -297,7 +265,6 @@ than being something CI can assert. `main` requires these checks:
 ```
 build, test, gas
 @squaresdk/core against anvil
-verifies on Arc Testnet
 circuits
 prover (real proving key)
 services/prover (hermetic)
