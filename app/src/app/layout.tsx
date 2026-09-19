@@ -9,7 +9,7 @@ import { TxToast } from "@/components/TxToast";
 
 export const metadata: Metadata = {
   title: { default: "Square", template: "%s | Square" },
-  description: "Compliance-gated settlement for autonomous agent work on Arc.",
+  description: "Compliance-gated settlement for autonomous agent work on Stellar.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

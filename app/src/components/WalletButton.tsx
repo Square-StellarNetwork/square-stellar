@@ -6,7 +6,7 @@ import { focusableWithin, focusCycleIndex } from "@/lib/focus";
 import { shortAddress } from "@/lib/format";
 import { describeError, switchNetworkGuidance, useTx } from "@/lib/tx";
 import { activeChain } from "@/lib/wagmi";
-import { ArcNetworkMark } from "./marks";
+import { StellarMark } from "./marks";
 
 const pill =
   "inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-iris px-4 text-caption font-medium text-carbon transition-colors hover:bg-iris/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lavender disabled:cursor-not-allowed disabled:bg-mist disabled:text-ash";
@@ -158,7 +158,7 @@ export function WalletButton() {
     return (
       <span className="flex shrink-0 items-center gap-1.5">
         <button type="button" className={pill} disabled={switching} onClick={() => switchChain({ chainId: activeChain.id })}>
-          <ArcNetworkMark className="size-4" />
+          <StellarMark className="size-4" />
           {switching ? "Switching" : `Switch to ${activeChain.name}`}
         </button>
         <span className={addressBadge} title={`Connected as ${address}`}>

@@ -1,14 +1,14 @@
 import { Marquee, type MarqueeItem } from "./primitives";
 
 const STACK: MarqueeItem[] = [
-  { name: "Arc Testnet", detail: "chain 5042002" },
-  { name: "USDC", detail: "6 decimals, EIP-3009" },
-  { name: "ERC-8183", detail: "agentic commerce escrow" },
-  { name: "ERC-8004", detail: "identity, reputation, validation" },
-  { name: "ERC-4337 v0.7", detail: "SimpleAccount" },
+  { name: "Stellar Testnet", detail: "protocol 27" },
+  { name: "USDC", detail: "issued by Circle, 7 decimals" },
+  { name: "Soroban", detail: "escrow, arbitration, receivable market" },
+  { name: "8004", detail: "identity, reputation, validation" },
+  { name: "Soroban authorization", detail: "signed entries, no approve step" },
   { name: "x402 v2", detail: "HTTP payments" },
-  { name: "Groth16 on BN254", detail: "precompiles 0x06 to 0x08" },
-  { name: "Foundry", detail: "unit, fuzz and invariant tests" },
+  { name: "Groth16 on BN254", detail: "CAP-0074 host functions" },
+  { name: "Rust", detail: "unit, fuzz and invariant tests" },
 ];
 
 export function StandardsSection() {

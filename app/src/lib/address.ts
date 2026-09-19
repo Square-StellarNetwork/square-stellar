@@ -18,7 +18,7 @@ export function readAddressInput(value: string): AddressInput {
 }
 
 export function addressChecksumMessage(suggestion: Address): string {
-  return `Those are 40 hex characters, but the EIP-55 checksum does not match. The checksummed form is ${suggestion}.`;
+  return `Those are 40 hex characters, but the checksum does not match. The checksummed form is ${suggestion}.`;
 }
 
 export function addressInputError(input: AddressInput): string | null {

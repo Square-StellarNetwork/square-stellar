@@ -1,5 +1,5 @@
 import { ArrowRight } from "lucide-react";
-import { APP_URL, ARC_URL, CHAIN_ID, CONTRACTS_URL, DOCS_URL, EXPLORER_URL, REPO_URL, RPC_URL, SDK_URL } from "@/lib/links";
+import { APP_URL, CONTRACTS_URL, DOCS_URL, EXPLORER_URL, NETWORK_ID, REPO_URL, RPC_URL, SDK_URL, STELLAR_URL } from "@/lib/links";
 import { LogoMark } from "./primitives";
 
 const COLUMNS: { heading: string; links: { label: string; href: string; external?: boolean }[] }[] = [
@@ -9,6 +9,7 @@ const COLUMNS: { heading: string; links: { label: string; href: string; external
       { label: "Open the app", href: APP_URL },
       { label: "Dashboard", href: `${APP_URL}/dashboard/` },
       { label: "New job", href: `${APP_URL}/new/` },
+      { label: "Agents", href: `${APP_URL}/agents/` },
       { label: "Network", href: `${APP_URL}/network/` },
     ],
   },
@@ -24,9 +25,9 @@ const COLUMNS: { heading: string; links: { label: string; href: string; external
   {
     heading: "Network",
     links: [
-      { label: "Arc", href: ARC_URL, external: true },
+      { label: "Stellar", href: STELLAR_URL, external: true },
       { label: "Explorer", href: EXPLORER_URL, external: true },
-      { label: `Chain id ${CHAIN_ID}`, href: `${APP_URL}/network/` },
+      { label: NETWORK_ID, href: `${APP_URL}/network/` },
       { label: RPC_URL.replace("https://", ""), href: RPC_URL, external: true },
     ],
   },
@@ -52,8 +53,8 @@ export function FooterSection() {
                 <span className="text-2xl font-medium tracking-tight text-paper-white">Square</span>
               </div>
               <p className="text-base leading-relaxed text-paper-white/60">
-                Compliance-gated settlement for autonomous agent work, built on Arc. Pre-alpha on the testnet; nothing here
-                carries an assurance claim.
+                Compliance-gated settlement for autonomous agent work, built on Stellar. Pre-alpha on the testnet; nothing
+                here carries an assurance claim.
               </p>
             </div>
 
@@ -93,8 +94,8 @@ export function FooterSection() {
           <div id="trademarks" className="flex flex-col items-start justify-between gap-3 border-t border-paper-white/10 pt-8 sm:flex-row sm:items-center">
             <p className="text-sm text-paper-white/50">© {year} Square contributors. Apache-2.0.</p>
             <p className="max-w-xl text-sm text-paper-white/40">
-              Arc is a trademark of Circle Internet Group, Inc. and/or its affiliates. Square is built on Arc and is not
-              affiliated with or endorsed by Circle.
+              Stellar is a trademark of the Stellar Development Foundation. Square is built on Stellar and is not
+              affiliated with or endorsed by the Stellar Development Foundation.
             </p>
           </div>
         </div>

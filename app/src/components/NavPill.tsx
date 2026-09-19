@@ -15,7 +15,7 @@ const links = [
 ];
 
 const linkClass =
-  "inline-flex h-9 items-center rounded-full px-3.5 text-caption font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lavender";
+  "inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-caption font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lavender";
 
 export function NavPill() {
   const pathname = usePathname();

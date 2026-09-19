@@ -13,7 +13,7 @@ describe("readAddressInput", () => {
     expect(readAddressInput(`0X${checksummed.slice(2)}`)).toEqual({ kind: "valid", address: checksummed });
   });
 
-  it("separates a failed EIP-55 checksum from a length or format error, and offers the checksummed form", () => {
+  it("separates a failed checksum from a length or format error, and offers the checksummed form", () => {
     expect(readAddressInput(`0x${checksummed.slice(2).toUpperCase()}`)).toEqual({ kind: "checksum", suggestion: checksummed });
     expect(readAddressInput("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")).toEqual({ kind: "checksum", suggestion: checksummed });
   });

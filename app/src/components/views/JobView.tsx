@@ -192,7 +192,7 @@ function parseAgent(input: string): { agentId?: bigint; did?: string; error?: st
       return { error: error instanceof InvalidDidError ? error.message : describeError(error) };
     }
   }
-  if (!/^\d+$/.test(trimmed)) return { error: "Enter a numeric ERC-8004 agent id or a did:aip identifier." };
+  if (!/^\d+$/.test(trimmed)) return { error: "Enter a numeric 8004 agent id or a did:aip identifier." };
   return { agentId: BigInt(trimmed) };
 }
 
@@ -208,8 +208,8 @@ function SubmitAction({ ctx, detail, now }: { ctx: ActionContext; detail: JobDet
       title="Submit"
       description={
         horizon > 0
-          ? `Posts the keccak256 hash of the deliverable. Binding an ERC-8004 agent lets the hook write reputation for it at settlement. The deadline is ${formatTimestamp(submitDeadline(detail.record))}, which is the expiry less the settlement horizon of ${formatDuration(horizon)} snapshotted on this job.`
-          : `Posts the keccak256 hash of the deliverable. Binding an ERC-8004 agent lets the hook write reputation for it at settlement. This job's evaluator published no settlement horizon, so the deadline is the expiry itself, ${formatTimestamp(detail.record.expiredAt)}.`
+          ? `Posts the keccak256 hash of the deliverable. Binding an 8004 agent lets the hook write reputation for it at settlement. The deadline is ${formatTimestamp(submitDeadline(detail.record))}, which is the expiry less the settlement horizon of ${formatDuration(horizon)} snapshotted on this job.`
+          : `Posts the keccak256 hash of the deliverable. Binding an 8004 agent lets the hook write reputation for it at settlement. This job's evaluator published no settlement horizon, so the deadline is the expiry itself, ${formatTimestamp(detail.record.expiredAt)}.`
       }
       buttonLabel="Submit deliverable"
       disabled={deliverable === null || parsedAgent.error !== undefined || !open}
@@ -227,7 +227,7 @@ function SubmitAction({ ctx, detail, now }: { ctx: ActionContext; detail: JobDet
       >
         <textarea id="deliverable" rows={5} className={inputClass} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste the deliverable text" />
       </Field>
-      <Field label="Agent (optional)" htmlFor="agent" hint="ERC-8004 agent id, or a did:aip v2 identifier." error={parsedAgent.error ?? null}>
+      <Field label="Agent (optional)" htmlFor="agent" hint="8004 agent id, or a did:aip identifier." error={parsedAgent.error ?? null}>
         <input id="agent" className={inputClass} value={agent} onChange={(event) => setAgent(event.target.value)} placeholder="Agent id or did:aip identifier" />
       </Field>
       {open ? null : (
@@ -779,7 +779,7 @@ export function JobView() {
             <Row label="Agent">
               {detail.agentId !== null ? (
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="tabular-nums">ERC-8004 agent #{detail.agentId.toString()}</span>
+                  <span className="tabular-nums">8004 agent #{detail.agentId.toString()}</span>
                   <Link href={`/agents?did=${encodeURIComponent(formatDid(activeChain.id, deployment.identityRegistry, detail.agentId))}`} className="text-caption text-carbon underline decoration-fog underline-offset-4 hover:decoration-carbon">
                     Resolve its DID
                   </Link>
