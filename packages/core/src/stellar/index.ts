@@ -17,6 +17,14 @@ export {
   type AddressKind,
 } from "./address.js";
 export {
+  drawStellarBuyerSalt,
+  newStellarBuyerList,
+  stellarBuyerListFrom,
+  type StellarBuyerEligibility,
+  type StellarBuyerEntry,
+  type StellarBuyerList,
+} from "./buyers.js";
+export {
   connectSquareClient,
   createSquareClient,
   SquareClient,
@@ -65,6 +73,22 @@ export {
   type Diagnostic,
 } from "./errors.js";
 export { decodeSquareEvents, eventsNamed, ledgerOfEventId, type SquareEvent } from "./events.js";
+export {
+  buyerLeaf,
+  evidenceHash,
+  finalizeReason,
+  HashInputError,
+  keccak256,
+  merkleVerify,
+  resolutionHash,
+  scAddressXdr,
+  statementHash,
+  toHex,
+  type Bytes32,
+  type CheckOutcome,
+  type Outcome,
+  type SettlementEvidence,
+} from "./hash.js";
 export {
   isStellarNetworkId,
   networkFor,

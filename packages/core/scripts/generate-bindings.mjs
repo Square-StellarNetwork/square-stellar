@@ -10,7 +10,8 @@
 //
 // Neither version is written here. docs/decisions/stellar-target.md decides
 // them; the stellar-cli pin is the default of .github/actions/stellar-cli
-// (what CI installs) and the SDK pin is contracts/probes/package.json's.
+// (what CI installs) and the SDK pin is this package's own manifest, the one
+// the bindings are compiled against.
 //
 // src/bindings is excluded from this package's tsconfig until #23 wires the
 // clients into @squaresdk/core.
@@ -40,9 +41,9 @@ function pinnedCli() {
 }
 
 function pinnedSdk() {
-  const manifest = JSON.parse(fs.readFileSync(path.join(CONTRACTS, 'probes', 'package.json'), 'utf8'));
+  const manifest = JSON.parse(fs.readFileSync(path.join(CORE, 'package.json'), 'utf8'));
   const version = manifest.dependencies?.['@stellar/stellar-sdk'];
-  if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error(`contracts/probes/package.json does not pin @stellar/stellar-sdk exactly: ${version}`);
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error(`packages/core/package.json does not pin @stellar/stellar-sdk exactly: ${version}`);
   return version;
 }
 

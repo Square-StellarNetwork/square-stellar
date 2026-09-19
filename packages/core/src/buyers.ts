@@ -1,5 +1,9 @@
 import { concat, encodeAbiParameters, getAddress, isAddress, isHex, keccak256, size, toHex, type Address, type Hex } from "viem";
 
+import { BUYER_SALT_FLOOR, BuyerListError } from "./buyerSalt.js";
+
+export { BUYER_SALT_FLOOR, BuyerListError };
+
 /**
  * Who a receivable may be sold to. square#30.
  *
@@ -35,19 +39,7 @@ export interface BuyerList {
   eligibilityOf(buyer: Address): BuyerEligibility;
 }
 
-export class BuyerListError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "BuyerListError";
-  }
-}
 
-/**
- * The same floor the prover holds `policy_salt` to (square#178). A leaf hides
- * its buyer only as far as its salt cannot be guessed, and the buyer's address
- * is the half of the preimage anyone can guess.
- */
-export const BUYER_SALT_FLOOR = 1n << 128n;
 
 export function buyerLeaf(buyer: Address, salt: Hex): Hex {
   return keccak256(keccak256(encodeAbiParameters([{ type: "address" }, { type: "bytes32" }], [buyer, salt])));
