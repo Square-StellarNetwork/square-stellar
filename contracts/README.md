@@ -6,13 +6,16 @@ The Stellar contracts are a Cargo workspace in this directory
 ([#7](https://github.com/Square-StellarNetwork/square-stellar/issues/7)). They
 are written contract by contract in the B-cluster issues, and until each one
 lands its crate is a skeleton that compiles to a Wasm with no functions. The
-Foundry project below stays until its Rust replacement lands
+kernel has landed in its MVP form, the challenge-window settlement of the
+"MVP — testnet" milestone ([`contracts/square_job/README.md`](contracts/square_job/README.md));
+the other eight are still skeletons. The Foundry project below stays until its
+Rust replacement lands
 ([docs/upstream/foundry-to-soroban.md](../docs/upstream/foundry-to-soroban.md)).
 
 | Path | What |
 |---|---|
-| `contracts/<name>/` | one crate per deployed contract: `square_job`, `groth16_verifier`, `policy_registry`, `compliance_module`, `square_hook`, `keeper_evaluator`, `arbitration`, `claim_market`, `screening_registry` |
-| `common/` | shared types, errors, events, storage/TTL helpers ([#8](https://github.com/Square-StellarNetwork/square-stellar/issues/8)) |
+| `contracts/<name>/` | one crate per deployed contract: `square_job` (the MVP kernel, [#9](https://github.com/Square-StellarNetwork/square-stellar/issues/9)), `groth16_verifier`, `policy_registry`, `compliance_module`, `square_hook`, `keeper_evaluator`, `arbitration`, `claim_market`, `screening_registry` |
+| `common/` | shared types, errors, events, storage/TTL helpers and the two-step owner ([#8](https://github.com/Square-StellarNetwork/square-stellar/issues/8)); in the MVP, what the kernel uses |
 | `test-support/` | test-only contracts for the test suites ([#18](https://github.com/Square-StellarNetwork/square-stellar/issues/18)) |
 | `probes/` | the measurements behind the A-cluster decision records, with their Node scripts; not part of the deployment |
 | `tools/check-no-upgrade.mjs` | fails any contract Wasm that can replace its own code |
