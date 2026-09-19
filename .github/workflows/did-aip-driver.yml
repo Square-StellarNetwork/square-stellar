@@ -29,7 +29,9 @@ permissions:
   contents: read
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/driver-did-aip
+  # Written out in lower case: an image reference must be lower case, and
+  # github.repository_owner is `Square-StellarNetwork`, which buildx rejects.
+  IMAGE: ghcr.io/square-stellarnetwork/driver-did-aip
 
 jobs:
   # The driver's own suite, which CI has never run. This workflow built an image
