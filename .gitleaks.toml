@@ -77,3 +77,17 @@ exception is by VALUE, not by path: any other key added to .env.example is still
 reported."""
 regexTarget = "line"
 regexes = ['''0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356''']
+
+[[allowlists]]
+description = """Stellar RPC yanitlarindan alinan test fixture'lari
+(packages/core/test/stellar/fixtures, #23): `simulateTransaction`'in
+`stateChanges[].key` alani bir LedgerKey'in base64 XDR'i. generic-api-key kurali,
+alan adinin `key` olmasi ve degerin yuksek entropili olmasi yuzunden takiliyor.
+Bir ledger anahtari sir degil: agdaki bir girdinin adresi. Istisna YOL degil
+DEGER bazinda, ve yalnizca `"key": "AAAA…"` seklinde: XDR'in sifir baytlik
+basligi (`AAAA`) ile baslayan bir base64 degeri. Bir ust duzey `paths` istisnasi
+dosyanin tamamini taramadan gecirirdi (negatif kontrolle dogrulandi: ayni
+dizine konan bir Square access token gorunmez oluyordu); deger bazinda istisna
+ile ayni dosyaya girecek baska bir sir yine yakalaniyor."""
+regexTarget = "line"
+regexes = ['''"key":\s*"AAAA[A-Za-z0-9+/=]{40,}"''']
