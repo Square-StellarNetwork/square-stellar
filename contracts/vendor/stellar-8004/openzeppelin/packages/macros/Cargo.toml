@@ -1,0 +1,21 @@
+[package]
+name = "stellar-macros"
+# Port: the four fields below were `*.workspace = true`, inherited from
+# OpenZeppelin's root manifest (version 0.6.0 at 9dd85c30); written out here.
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/OpenZeppelin/stellar-contracts"
+version = "0.6.0"
+# Port: upstream `publish = true`. A vendored copy is never published.
+publish = false
+description = "Macros for Stellar contracts."
+
+
+[lib]
+proc-macro = true
+doctest = false
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }

@@ -16,5 +16,5 @@
     "rootDir": "."
   },
   "include": ["src", "test"],
-  "exclude": ["src/bindings"]
+  "exclude": ["src/bindings", "src/registry-bindings"]
 }

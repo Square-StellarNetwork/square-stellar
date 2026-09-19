@@ -1,0 +1,25 @@
+[package]
+name = "stellar-access"
+# Port: the four fields below were `*.workspace = true`, inherited from
+# OpenZeppelin's root manifest (version 0.6.0 at 9dd85c30); written out here.
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/OpenZeppelin/stellar-contracts"
+version = "0.6.0"
+# Port: upstream `publish = true`. A vendored copy is never published.
+publish = false
+description = "Access Control, Ownable, and Role Transfer utilities for Stellar contracts."
+
+
+[lib]
+# Port: upstream `["lib", "cdylib"]`. Only the registries are contracts here, so
+# `stellar contract build` has no library Wasm to build.
+crate-type = ["lib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+stellar-event-assertion = { workspace = true }

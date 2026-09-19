@@ -1,0 +1,49 @@
+# trionlabs/stellar-8004 at d92c2f4ee01858b6da9bf4404ac49322c324958b, ported to
+# soroban-sdk =27.0.6 (docs/decisions/8004-registries-on-stellar.md, #33).
+# PORTING.md lists every line that differs from upstream, and why.
+#
+# This is a workspace of its own, with its own Cargo.lock and
+# rust-toolchain.toml. contracts/Cargo.toml does not list it, so its
+# dependencies never unify features with Square's contracts: the
+# `experimental_spec_shaking_v2` feature below stays in here.
+[workspace]
+resolver = "2"
+members = [
+    "contracts/*",
+    # OpenZeppelin stellar-contracts at 9dd85c3094321353e112a5be0e15ff44804da236,
+    # the revision upstream pins, reduced to what the registries use. Members so
+    # that `cargo test` runs their own tests against this SDK too.
+    "openzeppelin/packages/access",
+    "openzeppelin/packages/macros",
+    "openzeppelin/packages/tokens",
+    "openzeppelin/packages/test-utils/event-assertion",
+]
+
+[workspace.dependencies]
+# Upstream: `soroban-sdk = "25"` (resolved to 25.3.0), with spec shaking v2 turned
+# on through OpenZeppelin's own workspace dependency. Both are stated here.
+soroban-sdk = { version = "=27.0.6", features = ["experimental_spec_shaking_v2"] }
+# Upstream: git dependencies on OpenZeppelin/stellar-contracts at rev 9dd85c30.
+# That revision declares soroban-sdk 25.3.0, so it cannot share an Env with 27.x.
+stellar-tokens = { path = "openzeppelin/packages/tokens" }
+stellar-access = { path = "openzeppelin/packages/access" }
+stellar-macros = { path = "openzeppelin/packages/macros" }
+stellar-event-assertion = { path = "openzeppelin/packages/test-utils/event-assertion" }
+# OpenZeppelin's workspace dependencies that the vendored crates inherit.
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true

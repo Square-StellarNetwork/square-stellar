@@ -1,0 +1,189 @@
+{
+  "$comment": "The permanent smoke agents on Stellar testnet (#33, for #35): registered by contracts/vendor/stellar-8004/scripts/register-smoke-agents.mjs with owner keys kept only in the repository secrets SMOKE_AGENT_1_SECRET and SMOKE_AGENT_2_SECRET. This is the script's own output. Agent 1's URI is docs/smoke/agent-card.stellar.json, compacted, as a data: URI.",
+  "network": {
+    "name": "testnet",
+    "passphrase": "Test SDF Network ; September 2015",
+    "rpc": "https://soroban-testnet.stellar.org",
+    "protocol": 28
+  },
+  "identityRegistry": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+  "fundedByFriendbot": [
+    "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP",
+    "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO"
+  ],
+  "agents": [
+    {
+      "label": "card",
+      "owner": "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP",
+      "agentUriScheme": "data",
+      "agentUriLength": 553,
+      "agentId": 29,
+      "created": true,
+      "function": "register_with_uri",
+      "transactionHash": "2c7248b0a5dd8f22e7c42ef23a43e7c07df14021a60d8877d80769df1d3b0464",
+      "ledger": 4765322,
+      "explorer": "https://stellar.expert/explorer/testnet/tx/2c7248b0a5dd8f22e7c42ef23a43e7c07df14021a60d8877d80769df1d3b0464",
+      "feesStroops": {
+        "total": "1417348",
+        "nonRefundableResource": "24398",
+        "refundableResource": "1392850",
+        "rent": "1387654"
+      },
+      "events": [
+        {
+          "contract": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+          "topics": [
+            {
+              "symbol": "mint"
+            },
+            {
+              "address": "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP"
+            }
+          ],
+          "data": {
+            "map": {
+              "token_id": {
+                "u32": 29
+              }
+            }
+          }
+        },
+        {
+          "contract": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+          "topics": [
+            {
+              "symbol": "metadata_set"
+            },
+            {
+              "u32": 29
+            },
+            {
+              "string": "agentWallet"
+            }
+          ],
+          "data": {
+            "map": {
+              "value": {
+                "bytes": "474159445644354455525a34545251453749355932555655414c474d505042495653584d455947445358334c5347555450504e4c43414a50"
+              }
+            }
+          }
+        },
+        {
+          "contract": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+          "topics": [
+            {
+              "symbol": "registered"
+            },
+            {
+              "u32": 29
+            },
+            {
+              "address": "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP"
+            }
+          ],
+          "data": {
+            "map": {
+              "agent_uri": {
+                "string": "data:application/json;base64,eyJ0eXBlIjoiaHR0cHM6Ly9laXBzLmV0aGVyZXVtLm9yZy9FSVBTL2VpcC04MDA0I3JlZ2lzdHJhdGlvbi12MSIsIm5hbWUiOiJTcXVhcmUgU21va2UgQWdlbnQiLCJkZXNjcmlwdGlvbiI6IlBlcm1hbmVudCBpZGVudGl0eSBvbiBTdGVsbGFyIHRlc3RuZXQgdGhhdCBTcXVhcmUncyBlbmQtdG8tZW5kIHRlc3RzIHJlZ2lzdGVyIGFnYWluc3QgYW5kIHJlc29sdmUgYmFjay4gSXQgb2ZmZXJzIG5vIHNlcnZpY2UuIEl0cyBjYXJkIGlzIGVtYmVkZGVkIGluIHRoZSBhZ2VudCBVUkkgYXMgYSBkYXRhOiBVUkksIHNvIHJlc29sdmluZyBpdCBkZXBlbmRzIG9uIG5vIGdhdGV3YXkgYW5kIGNhbm5vdCByb3QuIiwic2VydmljZXMiOltdLCJ4NDAyU3VwcG9ydCI6ZmFsc2UsImFjdGl2ZSI6ZmFsc2V9"
+              }
+            }
+          }
+        }
+      ],
+      "readBack": {
+        "owner_of": "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP",
+        "get_agent_wallet": "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP",
+        "get_metadata_agentWallet": "GAYDVD5DURZ4TRQE7I5Y2UVUALGMPPBIVSXMEYGDSX3LSGUTPPNLCAJP",
+        "token_uri": "553 characters, equal to the card URI"
+      },
+      "cardFile": "docs/smoke/agent-card.stellar.json"
+    },
+    {
+      "label": "no-card",
+      "owner": "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO",
+      "agentUriScheme": "none",
+      "agentUriLength": 0,
+      "agentId": 30,
+      "created": true,
+      "function": "register",
+      "transactionHash": "72e2788fc2d51868847c1172ab985846b5469b9dfc610401623629e9dc528289",
+      "ledger": 4765323,
+      "explorer": "https://stellar.expert/explorer/testnet/tx/72e2788fc2d51868847c1172ab985846b5469b9dfc610401623629e9dc528289",
+      "feesStroops": {
+        "total": "311888",
+        "nonRefundableResource": "15889",
+        "refundableResource": "295899",
+        "rent": "293418"
+      },
+      "events": [
+        {
+          "contract": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+          "topics": [
+            {
+              "symbol": "mint"
+            },
+            {
+              "address": "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO"
+            }
+          ],
+          "data": {
+            "map": {
+              "token_id": {
+                "u32": 30
+              }
+            }
+          }
+        },
+        {
+          "contract": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+          "topics": [
+            {
+              "symbol": "metadata_set"
+            },
+            {
+              "u32": 30
+            },
+            {
+              "string": "agentWallet"
+            }
+          ],
+          "data": {
+            "map": {
+              "value": {
+                "bytes": "47435a544f57344554484e433436324252324b4b4544414f35324f534e434f4834454533374d51525449514a375950544e54574d5148424f"
+              }
+            }
+          }
+        },
+        {
+          "contract": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+          "topics": [
+            {
+              "symbol": "registered"
+            },
+            {
+              "u32": 30
+            },
+            {
+              "address": "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO"
+            }
+          ],
+          "data": {
+            "map": {
+              "agent_uri": {
+                "string": ""
+              }
+            }
+          }
+        }
+      ],
+      "readBack": {
+        "owner_of": "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO",
+        "get_agent_wallet": "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO",
+        "get_metadata_agentWallet": "GCZTOW4ETHNC462BR2KKEDAO52OSNCOH4EE37MQRTIQJ7YPTNTWMQHBO",
+        "token_uri": ""
+      }
+    }
+  ]
+}

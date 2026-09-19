@@ -1,0 +1,8 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Square Smoke Agent",
+  "description": "Permanent identity on Stellar testnet that Square's end-to-end tests register against and resolve back. It offers no service. Its card is embedded in the agent URI as a data: URI, so resolving it depends on no gateway and cannot rot.",
+  "services": [],
+  "x402Support": false,
+  "active": false
+}

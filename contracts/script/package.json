@@ -1,0 +1,12 @@
+{
+  "name": "square-contracts-scripts",
+  "private": true,
+  "description": "Node tooling for the Soroban deploy and key scripts in contracts/script (#19, #33). The SDK pin is docs/decisions/stellar-target.md's.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "16.3.0"
+  }
+}

@@ -9,9 +9,14 @@
 //! - [`hostile`]: the adversarial hooks of
 //!   docs/decisions/call-graph-on-soroban.md.
 //!
+//! - [`registries`] (feature `registries`): the three 8004 registries from the
+//!   vendored upstream source (`contracts/vendor/stellar-8004`), registered
+//!   from the Wasm the local stack deploys.
 
 pub mod account;
 pub mod hostile;
+#[cfg(feature = "registries")]
+pub mod registries;
 pub mod usdc;
 
 pub use account::{authorize, call, Account, Invocation};
@@ -19,6 +24,8 @@ pub use hostile::{
     HostileError, HostileHook, HostileHookClient, Mode, WrongTypeHook, WrongTypeHookClient,
 };
 pub use usdc::Usdc;
+#[cfg(feature = "registries")]
+pub use registries::Registries;
 
 #[cfg(test)]
 mod test;

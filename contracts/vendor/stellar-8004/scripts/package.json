@@ -1,0 +1,15 @@
+{
+  "name": "square-8004-scripts",
+  "private": true,
+  "description": "Testnet scripts for the 8004 registries Square binds (docs/decisions/8004-registries-on-stellar.md): the smoke agents' registration.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "register-smoke-agents": "node register-smoke-agents.mjs"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "16.3.0"
+  }
+}

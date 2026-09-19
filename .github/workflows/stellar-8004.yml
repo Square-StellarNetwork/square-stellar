@@ -1,0 +1,105 @@
+name: stellar-8004
+
+# The 8004 registries Square binds on testnet are trionlabs/stellar-8004's
+# deployment, and the local stack builds the same source from
+# contracts/vendor/stellar-8004 (docs/decisions/8004-registries-on-stellar.md,
+# #33). Two jobs keep the three in step:
+#
+# - `check`, on pull requests that touch them, weekly, and on demand: the
+#   port's tests and build, then `check-8004-interface.mjs --check`. The live
+#   spec must equal interface.json and the decision's table, and the port must
+#   hold every live entry. No upgrade may be pending or executed, and no owner
+#   may have changed.
+# - `watch`, on the other six days: `--watch` alone, the backstop of the
+#   upgrade watch. The registries' timelock is 51,840 ledgers (3 days), so a
+#   weekly look alone could miss a proposal.
+#
+# The pull_request trigger is path-filtered, as #33 asks. So this workflow must
+# not be made a required status check: a run the filter skips never reports
+# (see the note on contracts.yml's trigger).
+on:
+  pull_request:
+    paths:
+      - "contracts/vendor/**"
+      - "contracts/tools/check-8004-interface.mjs"
+      - "packages/core/scripts/generate-8004-bindings.mjs"
+      - "packages/core/src/registry-bindings/**"
+      - "docs/decisions/8004-registries-on-stellar.md"
+      - ".github/workflows/stellar-8004.yml"
+  schedule:
+    - cron: "23 6 * * 1"
+    - cron: "23 6 * * 0,2-6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 8004 interface (live spec, table, port)
+    if: github.event_name != 'schedule' || github.event.schedule == '23 6 * * 1'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      # The port is its own workspace with its own toolchain file, which pins
+      # the same Rust as contracts/rust-toolchain.toml.
+      - name: Rust toolchain from the port's rust-toolchain.toml
+        working-directory: contracts/vendor/stellar-8004
+        run: |
+          set -euo pipefail
+          toolchain=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal --target wasm32v1-none --component rustfmt
+          rustc --version
+
+      - uses: ./.github/actions/stellar-cli
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Build the port
+        working-directory: contracts/vendor/stellar-8004
+        run: |
+          set -euo pipefail
+          stellar contract build --locked
+          {
+            echo '### stellar-8004 port'
+            echo
+            echo '| Wasm | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in target/wasm32v1-none/release/*.wasm; do
+              echo "| $(basename "$f") | $(wc -c < "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The port, driven with real signatures: an agent and a validation
+      # request, each signed by an account whose signature the host verifies.
+      - name: The port under square-test-support's registries tests
+        working-directory: contracts
+        run: cargo test --locked -p square-test-support --features registries
+
+      - name: Live spec, interface.json, the table and the port agree
+        run: node contracts/tools/check-8004-interface.mjs --check
+
+      # #33: @squaresdk/core's bindings for the three registries are generated
+      # from the live contracts' own spec, fetched and held to the published
+      # hashes, never written by hand.
+      - name: The @squaresdk/core 8004 bindings are the live spec's
+        run: node packages/core/scripts/generate-8004-bindings.mjs --check
+
+  watch:
+    name: 8004 upgrade watch
+    if: github.event_name == 'schedule' && github.event.schedule == '23 6 * * 0,2-6'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: ./.github/actions/stellar-cli
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: No upgrade proposed or executed, no owner changed
+        run: node contracts/tools/check-8004-interface.mjs --watch

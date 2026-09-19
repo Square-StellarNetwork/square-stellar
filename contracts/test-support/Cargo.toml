@@ -16,3 +16,7 @@ square-common = { workspace = true }
 ed25519-dalek = "2.2.0"
 sha2 = "0.10.9"
 
+[features]
+# The 8004 registries module registers the port's Wasm, which
+# `stellar contract build` in contracts/vendor/stellar-8004 writes first.
+registries = []

@@ -1,0 +1,1983 @@
+{
+  "header": {
+    "$comment": "Hand-maintained. The ids, hashes and sources of the three 8004 registries Square binds on testnet, and the rows of the interface table in docs/decisions/8004-registries-on-stellar.md. `generated` below is written by contracts/tools/check-8004-interface.mjs from the live contracts; do not edit it by hand.",
+    "decision": "docs/decisions/8004-registries-on-stellar.md",
+    "upstream": {
+      "repository": "https://github.com/trionlabs/stellar-8004",
+      "commit": "d92c2f4ee01858b6da9bf4404ac49322c324958b",
+      "contract_ids_source": "https://github.com/trionlabs/stellar-8004/blob/d92c2f4ee01858b6da9bf4404ac49322c324958b/webapp/packages/sdk/src/core/config.ts",
+      "wasm_sha256_source": "https://github.com/trionlabs/stellar-8004/blob/d92c2f4ee01858b6da9bf4404ac49322c324958b/contracts/wasm.sha256",
+      "upgrade_timelock_ledgers": 51840,
+      "upgrade_timelock_source": "https://github.com/trionlabs/stellar-8004/blob/d92c2f4ee01858b6da9bf4404ac49322c324958b/contracts/identity-registry/src/storage.rs#L32 (the same constant at line 8 of the reputation and validation storage.rs)"
+    },
+    "network": {
+      "name": "testnet",
+      "rpc_url": "https://soroban-testnet.stellar.org",
+      "network_passphrase": "Test SDF Network ; September 2015",
+      "explorer_url": "https://stellar.expert/explorer/testnet"
+    },
+    "registries": {
+      "identity": {
+        "contract_id": "CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH",
+        "published_wasm_sha256": "f25af88f3e26f603a6569b2554b3f85ccc8af9a88f3b904fba873637c64eb2ab",
+        "port_wasm": "identity_registry.wasm"
+      },
+      "reputation": {
+        "contract_id": "CBZEAGIEI3HXMDRLF44KLQJQQOH6LCYWWSGJVSYQYQO2HQ6DDGZ7HT55",
+        "published_wasm_sha256": "74af1a031934346260f7265dacb633209dba507c1416f1e37d52405b53478f71",
+        "port_wasm": "reputation_registry.wasm"
+      },
+      "validation": {
+        "contract_id": "CC5USZRO26MOIAVNYTTJDS63C2OBBLREOAOET4CPF2EZWO3YFKLMO3SL",
+        "published_wasm_sha256": "9e5d7dc78ca00fc7c7afc914a0b3ecbcec61b4e7b1893a84bf47c3b811c68aa1",
+        "port_wasm": "validation_registry.wasm"
+      }
+    },
+    "table": {
+      "identity": {
+        "functions": {
+          "register": {
+            "used_by": "CLI (#30); smoke agent without a card (#35)",
+            "note": "Auth: `caller`. Mints the next id to `caller` (ids start at 0) and sets its `agentWallet` to `caller`. The id is the transaction's return value."
+          },
+          "register_with_uri": {
+            "used_by": "CLI (#30); smoke agent with a card (#35)",
+            "note": "As `register`, and stores `agent_uri`, which `token_uri` then returns."
+          },
+          "register_full": {
+            "used_by": "CLI (#30)",
+            "note": "As `register_with_uri`, plus at most 100 `MetadataEntry`s. A reserved `agentWallet` key, a key over 64 bytes or a value over 4096 bytes panics; it is not an error code."
+          },
+          "owner_of": {
+            "used_by": "hook (#13); resolver (#34)",
+            "note": "Traps with `Error(Contract, #200)` (`NonExistentToken`) for an id that was never minted."
+          },
+          "find_owner": {
+            "used_by": "hook (#13)",
+            "note": "`None` for an id that was never minted: the form of `owner_of` that does not trap."
+          },
+          "get_metadata": {
+            "used_by": "hook (#13); resolver (#34)",
+            "note": "With key `agentWallet`: the wallet's StrKey as ASCII bytes, 56 for a `G…` or `C…` address; `None` when unset or for an unminted id. Any other key: the bytes stored by `set_metadata`."
+          },
+          "get_agent_wallet": {
+            "used_by": "hook (#13); resolver (#34)",
+            "note": "The same wallet as an `Address`; `None` when unset or for an unminted id."
+          },
+          "token_uri": {
+            "used_by": "resolver (#34)",
+            "note": "The stored agent URI, or `\"\"` if none was set. Traps with `#200` for an id that was never minted."
+          },
+          "get_owner": {
+            "used_by": "upgrade watch",
+            "note": "The one account that can `propose_upgrade`, `execute_upgrade` and `cancel_upgrade`."
+          },
+          "pending_upgrade": {
+            "used_by": "upgrade watch",
+            "note": "`Some` from `propose_upgrade` until `execute_upgrade` or `cancel_upgrade`. `execute_upgrade` succeeds 51,840 ledgers after `proposed_at`."
+          }
+        },
+        "events": {
+          "Mint": {
+            "note": "From every `register*`, first. OpenZeppelin's event."
+          },
+          "MetadataSet": {
+            "note": "From every `register*` with key `agentWallet` and the owner's StrKey bytes, then once per entry of `register_full`; from `set_metadata`, `set_agent_wallet`; from `unset_agent_wallet`, `transfer` and `transfer_from` with key `agentWallet` and an empty value."
+          },
+          "Registered": {
+            "note": "From every `register*`, last; `agent_uri` is `\"\"` for `register`."
+          },
+          "UriUpdated": {
+            "note": "From `set_agent_uri`."
+          },
+          "Transfer": {
+            "note": "From `transfer` and `transfer_from`, which first delete the wallet and every metadata entry of the agent. OpenZeppelin's event."
+          },
+          "OwnershipTransfer": {
+            "note": "The registry owner offered ownership to `new_owner` (upgrade watch)."
+          },
+          "OwnershipTransferCompleted": {
+            "note": "`new_owner` accepted: it can now propose upgrades (upgrade watch)."
+          },
+          "OwnershipRenounced": {
+            "note": "No owner any more: no upgrade can be proposed again (upgrade watch)."
+          }
+        }
+      },
+      "reputation": {
+        "functions": {
+          "give_feedback": {
+            "used_by": "hook (#13)",
+            "note": "Auth: `caller`; the hook passes its own address and authorizes as the direct invoker. Errors: `SelfFeedback` (#1) if `caller` owns or is approved for the agent, `InvalidValueDecimals` (#3) above 18, `AgentNotFound` (#6), `ValueOutOfRange` (#8) above 10^38 in absolute value."
+          },
+          "read_feedback": {
+            "used_by": "hook tests (#13, #18)",
+            "note": "Feedback indices start at 1. `FeedbackNotFound` (#2) for an index not written."
+          },
+          "get_last_index": {
+            "used_by": "hook tests (#13, #18)",
+            "note": "0 until `client_address` first gives feedback to the agent."
+          },
+          "get_owner": {
+            "used_by": "upgrade watch",
+            "note": "As on the identity registry."
+          },
+          "pending_upgrade": {
+            "used_by": "upgrade watch",
+            "note": "As on the identity registry."
+          }
+        },
+        "events": {
+          "NewFeedback": {
+            "note": "From `give_feedback`; `feedback_index` is the new `get_last_index`."
+          },
+          "OwnershipTransfer": {
+            "note": "Upgrade watch."
+          },
+          "OwnershipTransferCompleted": {
+            "note": "Upgrade watch."
+          },
+          "OwnershipRenounced": {
+            "note": "Upgrade watch."
+          }
+        }
+      },
+      "validation": {
+        "functions": {
+          "validation_request": {
+            "used_by": "provider, before a `submit` that binds an agent (#13)",
+            "note": "Auth: `caller`, who must own or be approved for the agent (`NotOwnerOrApproved`, #1). `AgentNotFound` (#7). `request_hash` must be new (`RequestAlreadyExists`, #4)."
+          },
+          "validation_response": {
+            "used_by": "hook (#13)",
+            "note": "Auth: `caller`, who must be the request's `validator_address` (`NotDesignatedValidator`, #5). `response` at most 100 (`InvalidResponse`, #3). Repeatable: a later response replaces the earlier one."
+          },
+          "get_validation_status": {
+            "used_by": "hook (#13)",
+            "note": "`RequestNotFound` (#2) for an unknown hash. Before any response, `has_response` is false and `response` is 0."
+          },
+          "get_owner": {
+            "used_by": "upgrade watch",
+            "note": "As on the identity registry."
+          },
+          "pending_upgrade": {
+            "used_by": "upgrade watch",
+            "note": "As on the identity registry."
+          }
+        },
+        "events": {
+          "ValidationRequest": {
+            "note": "From `validation_request`."
+          },
+          "ValidationResponse": {
+            "note": "From every `validation_response`."
+          },
+          "OwnershipTransfer": {
+            "note": "Upgrade watch."
+          },
+          "OwnershipTransferCompleted": {
+            "note": "Upgrade watch."
+          },
+          "OwnershipRenounced": {
+            "note": "Upgrade watch."
+          }
+        }
+      }
+    }
+  },
+  "generated": {
+    "$comment": "Written by contracts/tools/check-8004-interface.mjs from the live contracts named in header.registries. Do not edit.",
+    "registries": {
+      "identity": {
+        "wasm_sha256": "f25af88f3e26f603a6569b2554b3f85ccc8af9a88f3b904fba873637c64eb2ab",
+        "owner": "GCCWEPP2MFAUF5HWICYGXDVPBVSHFQWSLQOAMNARLDQIWC2AZVGNRSQV",
+        "functions": [
+          {
+            "name": "__constructor",
+            "inputs": [
+              {
+                "name": "owner",
+                "type": "Address"
+              },
+              {
+                "name": "name",
+                "type": "String"
+              },
+              {
+                "name": "symbol",
+                "type": "String"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "register",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              }
+            ],
+            "output": "u32"
+          },
+          {
+            "name": "register_with_uri",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_uri",
+                "type": "String"
+              }
+            ],
+            "output": "u32"
+          },
+          {
+            "name": "register_full",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_uri",
+                "type": "String"
+              },
+              {
+                "name": "metadata",
+                "type": "Vec<MetadataEntry>"
+              }
+            ],
+            "output": "u32"
+          },
+          {
+            "name": "set_agent_uri",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "new_uri",
+                "type": "String"
+              }
+            ],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "agent_uri",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "Result<String, IdentityError>"
+          },
+          {
+            "name": "set_metadata",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "key",
+                "type": "String"
+              },
+              {
+                "name": "value",
+                "type": "Bytes"
+              }
+            ],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "get_metadata",
+            "doc": "Routes `agentWallet` key to the dedicated wallet storage slot.",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "key",
+                "type": "String"
+              }
+            ],
+            "output": "Option<Bytes>"
+          },
+          {
+            "name": "set_agent_wallet",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "new_wallet",
+                "type": "Address"
+              }
+            ],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "get_agent_wallet",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "Option<Address>"
+          },
+          {
+            "name": "unset_agent_wallet",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "extend_ttl",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "propose_upgrade",
+            "inputs": [
+              {
+                "name": "new_wasm_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "cancel_upgrade",
+            "inputs": [],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "execute_upgrade",
+            "inputs": [],
+            "output": "Result<(), IdentityError>"
+          },
+          {
+            "name": "pending_upgrade",
+            "inputs": [],
+            "output": "Option<UpgradeProposal>"
+          },
+          {
+            "name": "version",
+            "inputs": [],
+            "output": "String"
+          },
+          {
+            "name": "find_owner",
+            "doc": "Non-panicking `owner_of` (safe for cross-contract calls).",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "Option<Address>"
+          },
+          {
+            "name": "agent_exists",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "bool"
+          },
+          {
+            "name": "is_authorized_or_owner",
+            "doc": "Returns true if spender is owner or approved. False if agent missing.",
+            "inputs": [
+              {
+                "name": "spender",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              }
+            ],
+            "output": "bool"
+          },
+          {
+            "name": "total_agents",
+            "inputs": [],
+            "output": "u32"
+          },
+          {
+            "name": "balance",
+            "doc": "Returns the number of tokens owned by `account`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `account` - The address for which the balance is being queried.",
+            "inputs": [
+              {
+                "name": "account",
+                "type": "Address"
+              }
+            ],
+            "output": "u32"
+          },
+          {
+            "name": "owner_of",
+            "doc": "Returns the owner of the token with `token_id`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `token_id` - Token ID as a number.\\n\\n# Errors\\n\\n* [`NonFungibleTokenError::NonExistentToken`] - If the token does not\\nexist.",
+            "inputs": [
+              {
+                "name": "token_id",
+                "type": "u32"
+              }
+            ],
+            "output": "Address"
+          },
+          {
+            "name": "transfer",
+            "doc": "Transfers the token with `token_id` from `from` to `to`.\\n\\nWARNING: Confirmation that the recipient is capable of receiving the\\n`Non-Fungible` is the caller's responsibility; otherwise the NFT may be\\npermanently lost.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `from` - Account of the sender.\\n* `to` - Account of the recipient.\\n* `token_id` - Token ID as a number.\\n\\n# Errors\\n\\n* [`NonFungibleTokenError::IncorrectOwner`] - If the current owner\\n(before calling this function) is not `from`.\\n* [`NonFungibleTokenError::NonExistentToken`] - If the token does not\\nexist.\\n\\n# Events\\n\\n* topics - `[\"transfer\", from: Address, to: Address]`\\n* data - `[token_id: u32]`",
+            "inputs": [
+              {
+                "name": "from",
+                "type": "Address"
+              },
+              {
+                "name": "to",
+                "type": "Address"
+              },
+              {
+                "name": "token_id",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "transfer_from",
+            "doc": "Transfers the token with `token_id` from `from` to `to` by using\\n`spender`s approval.\\n\\nUnlike `transfer()`, which is used when the token owner initiates the\\ntransfer, `transfer_from()` allows an approved third party\\n(`spender`) to transfer the token on behalf of the owner. This\\nfunction verifies that `spender` has the necessary approval.\\n\\nWARNING: Confirmation that the recipient is capable of receiving the\\n`Non-Fungible` is the caller's responsibility; otherwise the NFT may be\\npermanently lost.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `spender` - The address authorizing the transfer.\\n* `from` - Account of the sender.\\n* `to` - Account of the recipient.\\n* `token_id` - Token ID as a number.\\n\\n# Errors\\n\\n* [`NonFungibleTokenError::IncorrectOwner`] - If the current owner\\n(before calling this function) is not `from`.\\n* [`NonFungibleTokenError::InsufficientApproval`] - If the spender does\\nnot have a valid approval.\\n* [`NonFungibleTokenError::NonExistentToken`] - If the token does not\\nexist.\\n\\n# Events",
+            "inputs": [
+              {
+                "name": "spender",
+                "type": "Address"
+              },
+              {
+                "name": "from",
+                "type": "Address"
+              },
+              {
+                "name": "to",
+                "type": "Address"
+              },
+              {
+                "name": "token_id",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "approve",
+            "doc": "Gives permission to `approved` to transfer the token with `token_id` to\\nanother account. The approval is cleared when the token is\\ntransferred.\\n\\nOnly a single account can be approved at a time for a `token_id`.\\nTo remove an approval, the approver can approve their own address,\\neffectively removing the previous approved address. Alternatively,\\nsetting the `live_until_ledger` to `0` will also revoke the approval.\\n\\n# Arguments\\n\\n* `e` - Access to Soroban environment.\\n* `approver` - The address of the approver (should be `owner` or\\n`operator`).\\n* `approved` - The address receiving the approval.\\n* `token_id` - Token ID as a number.\\n* `live_until_ledger` - The ledger number at which the allowance\\nexpires. If `live_until_ledger` is `0`, the approval is revoked.\\n\\n# Errors\\n\\n* [`NonFungibleTokenError::NonExistentToken`] - If the token does not\\nexist.\\n* [`NonFungibleTokenError::InvalidApprover`] - If the owner address is\\nnot the actual owner of the token.\\n* [`NonFungibleTokenError::InvalidLiveUntilLedger`] - If the ledge",
+            "inputs": [
+              {
+                "name": "approver",
+                "type": "Address"
+              },
+              {
+                "name": "approved",
+                "type": "Address"
+              },
+              {
+                "name": "token_id",
+                "type": "u32"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "approve_for_all",
+            "doc": "Approve or remove `operator` as an operator for the owner.\\n\\nOperators can call `transfer_from()` for any token held by `owner`,\\nand call `approve()` on behalf of `owner`.\\n\\n# Arguments\\n\\n* `e` - Access to Soroban environment.\\n* `owner` - The address holding the tokens.\\n* `operator` - Account to add to the set of authorized operators.\\n* `live_until_ledger` - The ledger number at which the allowance\\nexpires. If `live_until_ledger` is `0`, the approval is revoked.\\n\\n# Errors\\n\\n* [`NonFungibleTokenError::InvalidLiveUntilLedger`] - If the ledger\\nnumber is less than the current ledger number.\\n\\n# Events\\n\\n* topics - `[\"approve_for_all\", from: Address]`\\n* data - `[operator: Address, live_until_ledger: u32]`",
+            "inputs": [
+              {
+                "name": "owner",
+                "type": "Address"
+              },
+              {
+                "name": "operator",
+                "type": "Address"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "get_approved",
+            "doc": "Returns the account approved for the token with `token_id`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `token_id` - Token ID as a number.\\n\\n# Errors\\n\\n* [`NonFungibleTokenError::NonExistentToken`] - If the token does not\\nexist.",
+            "inputs": [
+              {
+                "name": "token_id",
+                "type": "u32"
+              }
+            ],
+            "output": "Option<Address>"
+          },
+          {
+            "name": "is_approved_for_all",
+            "doc": "Returns whether the `operator` is allowed to manage all the assets of\\n`owner`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `owner` - Account of the token's owner.\\n* `operator` - Account to be checked.",
+            "inputs": [
+              {
+                "name": "owner",
+                "type": "Address"
+              },
+              {
+                "name": "operator",
+                "type": "Address"
+              }
+            ],
+            "output": "bool"
+          },
+          {
+            "name": "name",
+            "doc": "Returns the token collection name.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.",
+            "inputs": [],
+            "output": "String"
+          },
+          {
+            "name": "symbol",
+            "doc": "Returns the token collection symbol.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.",
+            "inputs": [],
+            "output": "String"
+          },
+          {
+            "name": "token_uri",
+            "doc": "Returns the Uniform Resource Identifier (URI) for the token with\\n`token_id`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `token_id` - Token ID as a number.\\n\\n# Notes\\n\\nIf the token does not exist, this function is expected to panic.",
+            "inputs": [
+              {
+                "name": "token_id",
+                "type": "u32"
+              }
+            ],
+            "output": "String"
+          },
+          {
+            "name": "get_owner",
+            "doc": "Returns `Some(Address)` if ownership is set, or `None` if ownership has\\nbeen renounced.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.",
+            "inputs": [],
+            "output": "Option<Address>"
+          },
+          {
+            "name": "transfer_ownership",
+            "doc": "Initiates a 2-step ownership transfer to a new address.\\n\\nRequires authorization from the current owner. The new owner must later\\ncall `accept_ownership()` to complete the transfer.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `new_owner` - The proposed new owner.\\n* `live_until_ledger` - Ledger number until which the new owner can\\naccept. A value of `0` cancels any pending transfer.\\n\\n# Errors\\n\\n* [`OwnableError::OwnerNotSet`] - If the owner is not set.\\n* [`crate::role_transfer::RoleTransferError::NoPendingTransfer`] - If\\ntrying to cancel a transfer that doesn't exist.\\n* [`crate::role_transfer::RoleTransferError::InvalidLiveUntilLedger`] -\\nIf the specified ledger is in the past.\\n* [`crate::role_transfer::RoleTransferError::InvalidPendingAccount`] -\\nIf the specified pending account is not the same as the provided `new`\\naddress.\\n\\n# Notes\\n\\n* Authorization for the current owner is required.",
+            "inputs": [
+              {
+                "name": "new_owner",
+                "type": "Address"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "accept_ownership",
+            "doc": "Accepts a pending ownership transfer.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n\\n# Errors\\n\\n* [`crate::role_transfer::RoleTransferError::NoPendingTransfer`] - If\\nthere is no pending transfer to accept.\\n\\n# Events\\n\\n* topics - `[\"ownership_transfer_completed\"]`\\n* data - `[new_owner: Address]`",
+            "inputs": [],
+            "output": "()"
+          },
+          {
+            "name": "renounce_ownership",
+            "doc": "Renounces ownership of the contract.\\n\\nPermanently removes the owner, disabling all functions gated by\\n`#[only_owner]`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n\\n# Errors\\n\\n* [`OwnableError::TransferInProgress`] - If there is a pending ownership\\ntransfer.\\n* [`OwnableError::OwnerNotSet`] - If the owner is not set.\\n\\n# Notes\\n\\n* Authorization for the current owner is required.",
+            "inputs": [],
+            "output": "()"
+          }
+        ],
+        "types": [
+          {
+            "kind": "error",
+            "name": "IdentityError",
+            "cases": [
+              {
+                "name": "NotOwnerOrApproved",
+                "value": 1
+              },
+              {
+                "name": "UriNotSet",
+                "value": 2
+              },
+              {
+                "name": "AgentNotFound",
+                "value": 3
+              },
+              {
+                "name": "MetadataKeyTooLong",
+                "value": 4
+              },
+              {
+                "name": "MetadataValueTooLong",
+                "value": 5
+              },
+              {
+                "name": "TooManyMetadataKeys",
+                "value": 6
+              },
+              {
+                "name": "ReservedMetadataKey",
+                "value": 7
+              },
+              {
+                "name": "EmptyValue",
+                "value": 8
+              },
+              {
+                "name": "NoUpgradeProposed",
+                "value": 9
+              },
+              {
+                "name": "TimelockNotExpired",
+                "value": 10
+              },
+              {
+                "name": "UpgradeAlreadyProposed",
+                "value": 11
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "UpgradeProposal",
+            "fields": [
+              {
+                "name": "proposed_at",
+                "type": "u32"
+              },
+              {
+                "name": "wasm_hash",
+                "type": "BytesN<32>"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "MetadataEntry",
+            "fields": [
+              {
+                "name": "key",
+                "type": "String"
+              },
+              {
+                "name": "value",
+                "type": "Bytes"
+              }
+            ]
+          }
+        ],
+        "events": [
+          {
+            "name": "Registered",
+            "prefix_topics": [
+              "registered"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "owner",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "agent_uri",
+                "type": "String",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "UriUpdated",
+            "prefix_topics": [
+              "uri_updated"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "updated_by",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "new_uri",
+                "type": "String",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "MetadataSet",
+            "doc": "All metadata writes (including agentWallet) flow through this event.",
+            "prefix_topics": [
+              "metadata_set"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "key",
+                "type": "String",
+                "location": "topic"
+              },
+              {
+                "name": "value",
+                "type": "Bytes",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipTransfer",
+            "doc": "Event emitted when an ownership transfer is initiated.",
+            "prefix_topics": [
+              "ownership_transfer"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "old_owner",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "new_owner",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipTransferCompleted",
+            "doc": "Event emitted when an ownership transfer is completed.",
+            "prefix_topics": [
+              "ownership_transfer_completed"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "new_owner",
+                "type": "Address",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipRenounced",
+            "doc": "Event emitted when ownership is renounced.",
+            "prefix_topics": [
+              "ownership_renounced"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "old_owner",
+                "type": "Address",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "Transfer",
+            "doc": "Event emitted when a token is transferred.",
+            "prefix_topics": [
+              "transfer"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "from",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "to",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "token_id",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "Approve",
+            "doc": "Event emitted when an approval is granted.",
+            "prefix_topics": [
+              "approve"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "approver",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "token_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "approved",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "ApproveForAll",
+            "doc": "Event emitted when approval for all tokens is granted.",
+            "prefix_topics": [
+              "approve_for_all"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "owner",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "operator",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "Mint",
+            "doc": "Event emitted when a token is minted.",
+            "prefix_topics": [
+              "mint"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "to",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "token_id",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          }
+        ]
+      },
+      "reputation": {
+        "wasm_sha256": "74af1a031934346260f7265dacb633209dba507c1416f1e37d52405b53478f71",
+        "owner": "GCCWEPP2MFAUF5HWICYGXDVPBVSHFQWSLQOAMNARLDQIWC2AZVGNRSQV",
+        "functions": [
+          {
+            "name": "__constructor",
+            "inputs": [
+              {
+                "name": "owner",
+                "type": "Address"
+              },
+              {
+                "name": "identity_registry",
+                "type": "Address"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "give_feedback",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "value",
+                "type": "i128"
+              },
+              {
+                "name": "value_decimals",
+                "type": "u32"
+              },
+              {
+                "name": "tag1",
+                "type": "String"
+              },
+              {
+                "name": "tag2",
+                "type": "String"
+              },
+              {
+                "name": "endpoint",
+                "type": "String"
+              },
+              {
+                "name": "feedback_uri",
+                "type": "String"
+              },
+              {
+                "name": "feedback_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<(), ReputationError>"
+          },
+          {
+            "name": "revoke_feedback",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64"
+              }
+            ],
+            "output": "Result<(), ReputationError>"
+          },
+          {
+            "name": "append_response",
+            "doc": "Callable by anyone.",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "client_address",
+                "type": "Address"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64"
+              },
+              {
+                "name": "response_uri",
+                "type": "String"
+              },
+              {
+                "name": "response_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<(), ReputationError>"
+          },
+          {
+            "name": "read_feedback",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "client_address",
+                "type": "Address"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64"
+              }
+            ],
+            "output": "Result<FeedbackData, ReputationError>"
+          },
+          {
+            "name": "get_summary",
+            "doc": "WAD-normalized average for given clients. Rejects empty client list.\\ni128 WAD overflow at |value| > ~1.7e20 with decimals=0 returns AggregateOverflow.",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "client_addresses",
+                "type": "Vec<Address>"
+              },
+              {
+                "name": "tag1",
+                "type": "String"
+              },
+              {
+                "name": "tag2",
+                "type": "String"
+              }
+            ],
+            "output": "Result<SummaryResult, ReputationError>"
+          },
+          {
+            "name": "get_clients_paginated",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "start",
+                "type": "u32"
+              },
+              {
+                "name": "limit",
+                "type": "u32"
+              }
+            ],
+            "output": "Vec<Address>"
+          },
+          {
+            "name": "get_last_index",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "client_address",
+                "type": "Address"
+              }
+            ],
+            "output": "u64"
+          },
+          {
+            "name": "get_response_count",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "client_address",
+                "type": "Address"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64"
+              }
+            ],
+            "output": "u32"
+          },
+          {
+            "name": "get_identity_registry",
+            "inputs": [],
+            "output": "Address"
+          },
+          {
+            "name": "extend_ttl",
+            "inputs": [],
+            "output": "()"
+          },
+          {
+            "name": "propose_upgrade",
+            "inputs": [
+              {
+                "name": "new_wasm_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<(), ReputationError>"
+          },
+          {
+            "name": "cancel_upgrade",
+            "inputs": [],
+            "output": "Result<(), ReputationError>"
+          },
+          {
+            "name": "execute_upgrade",
+            "inputs": [],
+            "output": "Result<(), ReputationError>"
+          },
+          {
+            "name": "pending_upgrade",
+            "inputs": [],
+            "output": "Option<UpgradeProposal>"
+          },
+          {
+            "name": "version",
+            "inputs": [],
+            "output": "String"
+          },
+          {
+            "name": "get_owner",
+            "doc": "Returns `Some(Address)` if ownership is set, or `None` if ownership has\\nbeen renounced.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.",
+            "inputs": [],
+            "output": "Option<Address>"
+          },
+          {
+            "name": "transfer_ownership",
+            "doc": "Initiates a 2-step ownership transfer to a new address.\\n\\nRequires authorization from the current owner. The new owner must later\\ncall `accept_ownership()` to complete the transfer.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `new_owner` - The proposed new owner.\\n* `live_until_ledger` - Ledger number until which the new owner can\\naccept. A value of `0` cancels any pending transfer.\\n\\n# Errors\\n\\n* [`OwnableError::OwnerNotSet`] - If the owner is not set.\\n* [`crate::role_transfer::RoleTransferError::NoPendingTransfer`] - If\\ntrying to cancel a transfer that doesn't exist.\\n* [`crate::role_transfer::RoleTransferError::InvalidLiveUntilLedger`] -\\nIf the specified ledger is in the past.\\n* [`crate::role_transfer::RoleTransferError::InvalidPendingAccount`] -\\nIf the specified pending account is not the same as the provided `new`\\naddress.\\n\\n# Notes\\n\\n* Authorization for the current owner is required.",
+            "inputs": [
+              {
+                "name": "new_owner",
+                "type": "Address"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "accept_ownership",
+            "doc": "Accepts a pending ownership transfer.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n\\n# Errors\\n\\n* [`crate::role_transfer::RoleTransferError::NoPendingTransfer`] - If\\nthere is no pending transfer to accept.\\n\\n# Events\\n\\n* topics - `[\"ownership_transfer_completed\"]`\\n* data - `[new_owner: Address]`",
+            "inputs": [],
+            "output": "()"
+          },
+          {
+            "name": "renounce_ownership",
+            "doc": "Renounces ownership of the contract.\\n\\nPermanently removes the owner, disabling all functions gated by\\n`#[only_owner]`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n\\n# Errors\\n\\n* [`OwnableError::TransferInProgress`] - If there is a pending ownership\\ntransfer.\\n* [`OwnableError::OwnerNotSet`] - If the owner is not set.\\n\\n# Notes\\n\\n* Authorization for the current owner is required.",
+            "inputs": [],
+            "output": "()"
+          }
+        ],
+        "types": [
+          {
+            "kind": "error",
+            "name": "ReputationError",
+            "cases": [
+              {
+                "name": "SelfFeedback",
+                "value": 1
+              },
+              {
+                "name": "FeedbackNotFound",
+                "value": 2
+              },
+              {
+                "name": "InvalidValueDecimals",
+                "value": 3
+              },
+              {
+                "name": "NotOwnerOrApproved",
+                "value": 4,
+                "doc": "Retained for ABI stability (now unused)."
+              },
+              {
+                "name": "AggregateOverflow",
+                "value": 5
+              },
+              {
+                "name": "AgentNotFound",
+                "value": 6
+              },
+              {
+                "name": "EmptyValue",
+                "value": 7
+              },
+              {
+                "name": "ValueOutOfRange",
+                "value": 8
+              },
+              {
+                "name": "ClientAddressesRequired",
+                "value": 9
+              },
+              {
+                "name": "NoUpgradeProposed",
+                "value": 10
+              },
+              {
+                "name": "TimelockNotExpired",
+                "value": 11
+              },
+              {
+                "name": "UpgradeAlreadyProposed",
+                "value": 12
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "UpgradeProposal",
+            "fields": [
+              {
+                "name": "proposed_at",
+                "type": "u32"
+              },
+              {
+                "name": "wasm_hash",
+                "type": "BytesN<32>"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "FeedbackData",
+            "fields": [
+              {
+                "name": "is_revoked",
+                "type": "bool"
+              },
+              {
+                "name": "tag1",
+                "type": "String"
+              },
+              {
+                "name": "tag2",
+                "type": "String"
+              },
+              {
+                "name": "value",
+                "type": "i128"
+              },
+              {
+                "name": "value_decimals",
+                "type": "u32"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "SummaryResult",
+            "fields": [
+              {
+                "name": "count",
+                "type": "u64"
+              },
+              {
+                "name": "summary_value",
+                "type": "i128"
+              },
+              {
+                "name": "summary_value_decimals",
+                "type": "u32"
+              }
+            ]
+          }
+        ],
+        "events": [
+          {
+            "name": "NewFeedback",
+            "prefix_topics": [
+              "new_feedback"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "client_address",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "tag1",
+                "type": "String",
+                "location": "topic"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64",
+                "location": "data"
+              },
+              {
+                "name": "value",
+                "type": "i128",
+                "location": "data"
+              },
+              {
+                "name": "value_decimals",
+                "type": "u32",
+                "location": "data"
+              },
+              {
+                "name": "tag2",
+                "type": "String",
+                "location": "data"
+              },
+              {
+                "name": "endpoint",
+                "type": "String",
+                "location": "data"
+              },
+              {
+                "name": "feedback_uri",
+                "type": "String",
+                "location": "data"
+              },
+              {
+                "name": "feedback_hash",
+                "type": "BytesN<32>",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "FeedbackRevoked",
+            "prefix_topics": [
+              "feedback_revoked"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "client_address",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64",
+                "location": "topic"
+              }
+            ]
+          },
+          {
+            "name": "ResponseAppended",
+            "prefix_topics": [
+              "response_appended"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "client_address",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "responder",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "feedback_index",
+                "type": "u64",
+                "location": "data"
+              },
+              {
+                "name": "response_uri",
+                "type": "String",
+                "location": "data"
+              },
+              {
+                "name": "response_hash",
+                "type": "BytesN<32>",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipTransfer",
+            "doc": "Event emitted when an ownership transfer is initiated.",
+            "prefix_topics": [
+              "ownership_transfer"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "old_owner",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "new_owner",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipTransferCompleted",
+            "doc": "Event emitted when an ownership transfer is completed.",
+            "prefix_topics": [
+              "ownership_transfer_completed"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "new_owner",
+                "type": "Address",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipRenounced",
+            "doc": "Event emitted when ownership is renounced.",
+            "prefix_topics": [
+              "ownership_renounced"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "old_owner",
+                "type": "Address",
+                "location": "data"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "wasm_sha256": "9e5d7dc78ca00fc7c7afc914a0b3ecbcec61b4e7b1893a84bf47c3b811c68aa1",
+        "owner": "GCCWEPP2MFAUF5HWICYGXDVPBVSHFQWSLQOAMNARLDQIWC2AZVGNRSQV",
+        "functions": [
+          {
+            "name": "__constructor",
+            "inputs": [
+              {
+                "name": "owner",
+                "type": "Address"
+              },
+              {
+                "name": "identity_registry",
+                "type": "Address"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "validation_request",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "validator_address",
+                "type": "Address"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "request_uri",
+                "type": "String"
+              },
+              {
+                "name": "request_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<(), ValidationError>"
+          },
+          {
+            "name": "validation_response",
+            "doc": "Responses are updateable (progressive validation); only original validator can update.",
+            "inputs": [
+              {
+                "name": "caller",
+                "type": "Address"
+              },
+              {
+                "name": "request_hash",
+                "type": "BytesN<32>"
+              },
+              {
+                "name": "response",
+                "type": "u32"
+              },
+              {
+                "name": "response_uri",
+                "type": "String"
+              },
+              {
+                "name": "response_hash",
+                "type": "BytesN<32>"
+              },
+              {
+                "name": "tag",
+                "type": "String"
+              }
+            ],
+            "output": "Result<(), ValidationError>"
+          },
+          {
+            "name": "get_validation_status",
+            "inputs": [
+              {
+                "name": "request_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<ValidationStatus, ValidationError>"
+          },
+          {
+            "name": "request_exists",
+            "inputs": [
+              {
+                "name": "request_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "bool"
+          },
+          {
+            "name": "get_summary",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "validator_addresses",
+                "type": "Vec<Address>"
+              },
+              {
+                "name": "tag",
+                "type": "String"
+              }
+            ],
+            "output": "ValidationSummary"
+          },
+          {
+            "name": "get_agent_validations_paginated",
+            "inputs": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "start",
+                "type": "u32"
+              },
+              {
+                "name": "limit",
+                "type": "u32"
+              }
+            ],
+            "output": "Vec<BytesN<32>>"
+          },
+          {
+            "name": "get_validator_requests_paginated",
+            "inputs": [
+              {
+                "name": "validator_address",
+                "type": "Address"
+              },
+              {
+                "name": "start",
+                "type": "u32"
+              },
+              {
+                "name": "limit",
+                "type": "u32"
+              }
+            ],
+            "output": "Vec<BytesN<32>>"
+          },
+          {
+            "name": "get_identity_registry",
+            "inputs": [],
+            "output": "Address"
+          },
+          {
+            "name": "extend_ttl",
+            "inputs": [],
+            "output": "()"
+          },
+          {
+            "name": "propose_upgrade",
+            "inputs": [
+              {
+                "name": "new_wasm_hash",
+                "type": "BytesN<32>"
+              }
+            ],
+            "output": "Result<(), ValidationError>"
+          },
+          {
+            "name": "cancel_upgrade",
+            "inputs": [],
+            "output": "Result<(), ValidationError>"
+          },
+          {
+            "name": "execute_upgrade",
+            "inputs": [],
+            "output": "Result<(), ValidationError>"
+          },
+          {
+            "name": "pending_upgrade",
+            "inputs": [],
+            "output": "Option<UpgradeProposal>"
+          },
+          {
+            "name": "version",
+            "inputs": [],
+            "output": "String"
+          },
+          {
+            "name": "get_owner",
+            "doc": "Returns `Some(Address)` if ownership is set, or `None` if ownership has\\nbeen renounced.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.",
+            "inputs": [],
+            "output": "Option<Address>"
+          },
+          {
+            "name": "transfer_ownership",
+            "doc": "Initiates a 2-step ownership transfer to a new address.\\n\\nRequires authorization from the current owner. The new owner must later\\ncall `accept_ownership()` to complete the transfer.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n* `new_owner` - The proposed new owner.\\n* `live_until_ledger` - Ledger number until which the new owner can\\naccept. A value of `0` cancels any pending transfer.\\n\\n# Errors\\n\\n* [`OwnableError::OwnerNotSet`] - If the owner is not set.\\n* [`crate::role_transfer::RoleTransferError::NoPendingTransfer`] - If\\ntrying to cancel a transfer that doesn't exist.\\n* [`crate::role_transfer::RoleTransferError::InvalidLiveUntilLedger`] -\\nIf the specified ledger is in the past.\\n* [`crate::role_transfer::RoleTransferError::InvalidPendingAccount`] -\\nIf the specified pending account is not the same as the provided `new`\\naddress.\\n\\n# Notes\\n\\n* Authorization for the current owner is required.",
+            "inputs": [
+              {
+                "name": "new_owner",
+                "type": "Address"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32"
+              }
+            ],
+            "output": "()"
+          },
+          {
+            "name": "accept_ownership",
+            "doc": "Accepts a pending ownership transfer.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n\\n# Errors\\n\\n* [`crate::role_transfer::RoleTransferError::NoPendingTransfer`] - If\\nthere is no pending transfer to accept.\\n\\n# Events\\n\\n* topics - `[\"ownership_transfer_completed\"]`\\n* data - `[new_owner: Address]`",
+            "inputs": [],
+            "output": "()"
+          },
+          {
+            "name": "renounce_ownership",
+            "doc": "Renounces ownership of the contract.\\n\\nPermanently removes the owner, disabling all functions gated by\\n`#[only_owner]`.\\n\\n# Arguments\\n\\n* `e` - Access to the Soroban environment.\\n\\n# Errors\\n\\n* [`OwnableError::TransferInProgress`] - If there is a pending ownership\\ntransfer.\\n* [`OwnableError::OwnerNotSet`] - If the owner is not set.\\n\\n# Notes\\n\\n* Authorization for the current owner is required.",
+            "inputs": [],
+            "output": "()"
+          }
+        ],
+        "types": [
+          {
+            "kind": "error",
+            "name": "ValidationError",
+            "cases": [
+              {
+                "name": "NotOwnerOrApproved",
+                "value": 1
+              },
+              {
+                "name": "RequestNotFound",
+                "value": 2
+              },
+              {
+                "name": "InvalidResponse",
+                "value": 3
+              },
+              {
+                "name": "RequestAlreadyExists",
+                "value": 4
+              },
+              {
+                "name": "NotDesignatedValidator",
+                "value": 5
+              },
+              {
+                "name": "AlreadyResponded",
+                "value": 6,
+                "doc": "Retained for ABI stability (now unused)."
+              },
+              {
+                "name": "AgentNotFound",
+                "value": 7
+              },
+              {
+                "name": "CounterOverflow",
+                "value": 8
+              },
+              {
+                "name": "NoUpgradeProposed",
+                "value": 9
+              },
+              {
+                "name": "TimelockNotExpired",
+                "value": 10
+              },
+              {
+                "name": "UpgradeAlreadyProposed",
+                "value": 11
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "UpgradeProposal",
+            "fields": [
+              {
+                "name": "proposed_at",
+                "type": "u32"
+              },
+              {
+                "name": "wasm_hash",
+                "type": "BytesN<32>"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "ValidationStatus",
+            "fields": [
+              {
+                "name": "agent_id",
+                "type": "u32"
+              },
+              {
+                "name": "has_response",
+                "type": "bool"
+              },
+              {
+                "name": "last_update",
+                "type": "u64"
+              },
+              {
+                "name": "response",
+                "type": "u32"
+              },
+              {
+                "name": "response_hash",
+                "type": "BytesN<32>"
+              },
+              {
+                "name": "tag",
+                "type": "String"
+              },
+              {
+                "name": "validator_address",
+                "type": "Address"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "ValidationSummary",
+            "fields": [
+              {
+                "name": "average_response",
+                "type": "u32"
+              },
+              {
+                "name": "count",
+                "type": "u64"
+              }
+            ]
+          }
+        ],
+        "events": [
+          {
+            "name": "ValidationRequest",
+            "prefix_topics": [
+              "validation_request"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "validator_address",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "request_hash",
+                "type": "BytesN<32>",
+                "location": "topic"
+              },
+              {
+                "name": "request_uri",
+                "type": "String",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "ValidationResponse",
+            "prefix_topics": [
+              "validation_response"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "validator_address",
+                "type": "Address",
+                "location": "topic"
+              },
+              {
+                "name": "agent_id",
+                "type": "u32",
+                "location": "topic"
+              },
+              {
+                "name": "request_hash",
+                "type": "BytesN<32>",
+                "location": "topic"
+              },
+              {
+                "name": "response",
+                "type": "u32",
+                "location": "data"
+              },
+              {
+                "name": "response_uri",
+                "type": "String",
+                "location": "data"
+              },
+              {
+                "name": "response_hash",
+                "type": "BytesN<32>",
+                "location": "data"
+              },
+              {
+                "name": "tag",
+                "type": "String",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipTransfer",
+            "doc": "Event emitted when an ownership transfer is initiated.",
+            "prefix_topics": [
+              "ownership_transfer"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "old_owner",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "new_owner",
+                "type": "Address",
+                "location": "data"
+              },
+              {
+                "name": "live_until_ledger",
+                "type": "u32",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipTransferCompleted",
+            "doc": "Event emitted when an ownership transfer is completed.",
+            "prefix_topics": [
+              "ownership_transfer_completed"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "new_owner",
+                "type": "Address",
+                "location": "data"
+              }
+            ]
+          },
+          {
+            "name": "OwnershipRenounced",
+            "doc": "Event emitted when ownership is renounced.",
+            "prefix_topics": [
+              "ownership_renounced"
+            ],
+            "data_format": "map",
+            "params": [
+              {
+                "name": "old_owner",
+                "type": "Address",
+                "location": "data"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+# stellar contract build handles the wasm32v1-none target automatically.
+# Do NOT set [build] target here - it breaks cargo test.

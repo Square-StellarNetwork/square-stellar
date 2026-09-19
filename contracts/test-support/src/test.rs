@@ -132,3 +132,38 @@ fn only_the_issuer_can_mint() {
     assert_eq!(usdc.balance(&holder.address), TEN_USDC);
 }
 
+#[cfg(feature = "registries")]
+mod registries {
+    use soroban_sdk::{BytesN, Env};
+
+    use crate::{Account, Registries};
+
+    #[test]
+    fn the_registries_deploy_as_upstream_orders_them_and_register_a_signed_agent() {
+        let env = Env::default();
+        let registries = Registries::deploy(&env);
+        assert_eq!(registries.reputation(&env).get_identity_registry(), registries.identity);
+        assert_eq!(registries.validation(&env).get_identity_registry(), registries.identity);
+        let provider = Account::new(&env);
+        let agent = registries.register_agent(&env, &provider);
+        assert_eq!(registries.identity(&env).owner_of(&agent), provider.address);
+        assert_eq!(registries.identity(&env).find_owner(&agent), Some(provider.address.clone()));
+        // A request names its validator; the hook is one, and here any address is.
+        let validator = Account::new(&env);
+        let request: BytesN<32> = env.crypto().sha256(&soroban_sdk::Bytes::from_slice(&env, b"square.test.validation-request")).into();
+        registries.request_validation(&env, &provider, &validator.address, agent, "", &request);
+        let status = registries.validation(&env).get_validation_status(&request);
+        assert_eq!(status.validator_address, validator.address);
+        assert_eq!(status.agent_id, agent);
+    }
+
+    #[test]
+    fn a_stranger_cannot_register_for_someone_else() {
+        let env = Env::default();
+        let registries = Registries::deploy(&env);
+        let owner = Account::new(&env);
+        let stranger = Account::new(&env);
+        crate::authorize(&env, &[stranger.sign(&crate::call(&env, &registries.identity, "register", (&owner.address,)))]);
+        assert!(registries.identity(&env).try_register(&owner.address).is_err());
+    }
+}
