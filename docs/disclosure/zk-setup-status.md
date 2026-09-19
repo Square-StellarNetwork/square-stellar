@@ -204,10 +204,14 @@ The move to Stellar does not change what the key is:
   ([docs/decisions/address-field-mapping.md](../decisions/address-field-mapping.md)).
   That changes what signals 2 and 4 mean, not the constraints: proofs about
   Stellar addresses come from the same circuit and key.
-- **A new phase 2 is needed if [#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20)
-  changes a constraint.**
+- **[#20](https://github.com/Square-StellarNetwork/square-stellar/issues/20)
+  changed no constraint.** It moved the circuit's inputs, tests and
+  documentation to `f` and to 7-decimal amounts; the compiled circuit is the
+  one the constraint table in `circuits/README.md` records, and
+  `circuits/test/constraint-cost.test.js` holds it there. No new phase 2 is
+  needed for the move to Stellar.
 - **The ceremony** ([#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51))
-  runs over the circuit as #20 freezes it for Stellar, and its key replaces
+  runs over the circuit as it stands, frozen by #20, and its key replaces
   this one.
 
 ## When this lifts

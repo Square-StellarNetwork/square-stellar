@@ -43,22 +43,35 @@ include "../lib/timestamp.circom";
 //
 //   [0] is_compliant             1 when all six rules pass, else 0
 //   [1] policy_data_hash         Poseidon commitment to the whole policy
-//   [2] recipient                payee address as a field element
-//   [3] amount                   payment amount, USDC base units (6 decimals)
-//   [4] token                    token address as a field element
+//   [2] recipient                f(payee address), see ADDRESSES below
+//   [3] amount                   payment amount, USDC base units (7 decimals)
+//   [4] token                    f(token contract)
 //   [5] daily_spent_before       operator's spend for the day before this one
 //   [6] current_unix_timestamp   seconds; the contract bounds it to block.timestamp
 //   [7] stripe_receipt_hash      Poseidon receipt commitment, 0 when unused
 //
-// AMOUNTS ARE 6-DECIMAL ERC-20 UNITS
+// ADDRESSES ARE f(addr), ONE FIELD ELEMENT EACH
+//
+// A Stellar address is 32 bytes, a G… account key or a C… contract hash, and
+// does not fit in BN254's field. It enters as
+//   f(addr) = sha256(XDR(ScVal::Address(addr)))[0..31]
+// 248 bits, always below r (docs/decisions/address-field-mapping.md). The
+// prover computes it for recipient, token and every list entry, the
+// compliance module computes it for the payee and the token it releases to
+// and compares with signals 2 and 4. Nothing in this file constrains the
+// width of these signals: they are required to be non-zero and to equal, or
+// not equal, list entries, so the constraints are the same as they were for
+// a 20-byte EVM address, and so is the proving key.
+//
+// AMOUNTS ARE 7-DECIMAL STELLAR ASSET CONTRACT UNITS
 //
 // Rules 1 and 2 compare with LessEqThan(64), so amounts must stay under 2^64.
-// On Arc, USDC has two interfaces: the ERC-20 side reports 6 decimals and
-// native gas accounting uses 18. At 6 decimals 2^64 is about 18.4 trillion
-// USDC; at 18 it is 18.44 USDC, which the circuit could not express. Escrow and
-// payment paths therefore use the ERC-20 interface — see
-// docs/decisions/erc20-vs-native-usdc.md. The bound is enforced here rather
-// than assumed, because an unenforced assumption is how the time rule broke.
+// USDC on Stellar is a Stellar Asset Contract with 7 decimals, so 2^64 base
+// units are about 1.84 trillion USDC (docs/decisions/stellar-target.md); the
+// kernel keeps the same u64 bound at the token boundary
+// (docs/decisions/auth-and-token-flow.md, decision 7). The bound is enforced
+// here rather than assumed, because an unenforced assumption is how the time
+// rule broke.
 //
 // WHAT STAYS PRIVATE
 //
@@ -79,11 +92,13 @@ template PaymentCompliance(MAX_WHITELIST, MAX_BLOCKED, MAX_CATEGORIES) {
     signal input max_per_tx;
     signal input max_daily;
 
-    // Address lists hold field elements directly. The Solana version stored a
-    // Poseidon hash of each entry's two halves because a 32-byte pubkey needed
-    // two field elements to be compared as one value; a 20-byte address does
-    // not, so the hashing is gone and membership is plain equality. Slots
-    // 0..count-1 carry real entries and the rest are zero-padded.
+    // Address lists hold field elements directly: f(addr) per entry, see the
+    // header. The Solana version stored a Poseidon hash of each entry's two
+    // halves because a 32-byte pubkey needed two field elements to be compared
+    // as one value; the Arc version dropped the hashing because a 20-byte
+    // address fits, and f keeps that layout for 32-byte Stellar addresses, so
+    // membership stays plain equality. Slots 0..count-1 carry real entries and
+    // the rest are zero-padded.
     //
     // There are no mask arrays any more, and their absence is a fix rather than
     // a simplification. Each list used to come with a parallel mask marking the

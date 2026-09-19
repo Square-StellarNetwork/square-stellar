@@ -29,9 +29,9 @@ verifier. Changing it is a breaking change that needs a new ceremony.
 |---|---|---|
 | 0 | `is_compliant` | `1` when all six rules pass, `0` otherwise. |
 | 1 | `policy_data_hash` | Commitment to the whole policy, openable one field at a time. The hook compares it against the registry. See [The policy commitment](#the-policy-commitment). |
-| 2 | `recipient` | Payee address as a field element. The hook compares it against the job's provider. |
-| 3 | `amount` | Payment amount in USDC base units, 6 decimals. Compared against the job's net payment. |
-| 4 | `token` | Token address as a field element. |
+| 2 | `recipient` | `f` of the payee address. The compliance module compares it against `f` of the job's payee. |
+| 3 | `amount` | Payment amount in USDC base units, 7 decimals (the Stellar Asset Contract's). Compared against the job's net payment. |
+| 4 | `token` | `f` of the token contract. |
 | 5 | `daily_spent_before` | The operator's spend for the day before this payment. Compared against the counter. |
 | 6 | `current_unix_timestamp` | Seconds. The contract bounds it to `block.timestamp ± tolerance`. |
 | 7 | `stripe_receipt_hash` | Poseidon receipt commitment, `0` when no Stripe receipt is claimed. |
@@ -68,13 +68,17 @@ instead of Poseidon images. Hashing to a field element keeps the Arc layout, so
 there are still eight public signals. Category entries are strings and stay
 Poseidon images.
 
-### Amounts are 6-decimal ERC-20 units
+### Amounts are 7-decimal Stellar Asset Contract units
 
-Rules 1 and 2 compare with `LessEqThan(64)`, so amounts stay under 2^64. At 6
-decimals that is roughly 18.4 trillion USDC; at Arc's 18-decimal native
-accounting it would be 18.45 USDC and the circuit could not express a normal
-payment. Escrow and payment paths therefore use the ERC-20 interface — see
-[docs/decisions/erc20-vs-native-usdc.md](../docs/decisions/erc20-vs-native-usdc.md).
+Rules 1 and 2 compare with `LessEqThan(64)`, so amounts stay under 2^64. USDC on
+Stellar is a Stellar Asset Contract and reports 7 decimals
+([docs/decisions/stellar-target.md](../docs/decisions/stellar-target.md)), so
+2^64 base units are about 1.84 trillion USDC, still far beyond any mandate. The
+kernel holds the same `u64` in its records and refuses a larger `i128` at the
+token boundary ([docs/decisions/auth-and-token-flow.md](../docs/decisions/auth-and-token-flow.md),
+decision 7), so the two bounds agree. History: on Arc the units were the
+ERC-20's 6 decimals ([docs/decisions/erc20-vs-native-usdc.md](../docs/decisions/erc20-vs-native-usdc.md));
+the width of the bound did not change, only what a unit is worth.
 
 The circuit enforces the bound with `Num2Bits(64)` on `amount` and
 `daily_spent_before` rather than assuming it. circomlib's comparator constrains
@@ -363,13 +367,18 @@ beacon applied           no
 
 ## What happens next
 
-[#16][i16] runs the ceremony that freezes this circuit. Nothing here may change
-after that without invalidating the proving key and requiring the ceremony to be
-run again, so [#14][i14] was the last chance to change it. [#18][i18] ports the
-prover service to the eight-signal layout, and [#17][i17] generates the Solidity
-verifier from the ceremony's key.
+The move to Stellar changed what two signals mean and nothing in the constraint
+system: [#20][s20] measured it, and `test/constraint-cost.test.js` holds the
+table above to the compiled circuit, unchanged. So the circuit is frozen as it
+stands. [#51][s51] runs the phase-2 ceremony over it, and its key replaces the
+development key ([docs/disclosure/zk-setup-status.md](../docs/disclosure/zk-setup-status.md));
+[#10][s10] generates the Soroban verifier's constants from that key; [#21][s21]
+ports the prover service to Stellar addresses, `f`, 7-decimal amounts and the
+512-byte proof the verifier takes ([docs/decisions/groth16-on-soroban.md](../docs/decisions/groth16-on-soroban.md)).
+Nothing here may change after the ceremony without invalidating the proving key
+and requiring it to be run again.
 
-[i14]: https://github.com/Square-StellarNetwork/square/issues/14
-[i16]: https://github.com/Square-StellarNetwork/square/issues/16
-[i17]: https://github.com/Square-StellarNetwork/square/issues/17
-[i18]: https://github.com/Square-StellarNetwork/square/issues/18
+[s10]: https://github.com/Square-StellarNetwork/square-stellar/issues/10
+[s20]: https://github.com/Square-StellarNetwork/square-stellar/issues/20
+[s21]: https://github.com/Square-StellarNetwork/square-stellar/issues/21
+[s51]: https://github.com/Square-StellarNetwork/square-stellar/issues/51

@@ -17,6 +17,8 @@ import { isCompiled, publicSignalsOf } from './helpers/signals.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUILD = path.resolve(HERE, '..', 'build');
+// BN254's scalar field order: every public signal has to stay below it.
+const R = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const ZKEY = path.join(BUILD, 'payment.zkey');
 const VKEY = path.join(BUILD, 'payment_vk.json');
 
@@ -108,18 +110,38 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
       const { signals } = await run({});
       expect(signals.recipient).toBe(addressToField(ADDRESSES.provider));
       expect(signals.token).toBe(addressToField(ADDRESSES.usdc));
-      expect(signals.amount).toBe('5000000');
-      expect(signals.daily_spent_before).toBe('50000000');
+      expect(signals.amount).toBe('50000000');
+      expect(signals.daily_spent_before).toBe('500000000');
       expect(signals.current_unix_timestamp).toBe(String(TIMESTAMP));
       expect(signals.stripe_receipt_hash).toBe('0');
     });
 
-    it('carries a whole address in one field element', async () => {
-      // The point of the reparameterisation: no high/low split.
+    it('carries an address as one field element, f, in one signal', async () => {
+      // No high/low split: the 32-byte key enters as sha256(XDR(ScVal::Address))[0..31].
+      // The expected value is the decision record's own vector for this address.
       const { signals } = await run({ recipient: ADDRESSES.blocked });
       expect(signals.recipient).toBe(
-        BigInt('0x2222222222222222222222222222222222222222').toString(),
+        BigInt('0x0057eb773202bd4b5e3528a821ff15a929aa379bf9b7e2943818c97ba7416e9a').toString(),
       );
+    });
+
+    it('computes f the way the decision record and the contract probe do', () => {
+      // contracts/probes/address_field_probe/vectors.json is written by the
+      // reference implementation and checked by the probe contract; this helper
+      // is a third implementation and has to land on the same integers.
+      const vectorsPath = path.resolve(HERE, '..', '..', 'contracts', 'probes', 'address_field_probe', 'vectors.json');
+      const { vectors } = JSON.parse(fs.readFileSync(vectorsPath, 'utf8'));
+      expect(vectors.length).toBeGreaterThanOrEqual(4);
+      for (const vector of vectors) {
+        expect(addressToField(vector.address), vector.name).toBe(vector.decimal);
+        expect(BigInt(addressToField(vector.address)) < R, `${vector.name} is below r`).toBe(true);
+      }
+    });
+
+    it('refuses what is not a Stellar address', () => {
+      for (const bad of ['0x1111111111111111111111111111111111111111', ADDRESSES.provider.toLowerCase(), '', 'MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAAAA']) {
+        expect(() => addressToField(bad)).toThrow(/not a Stellar/);
+      }
     });
 
     it('commits to the policy the same way the backend must', async () => {
@@ -130,8 +152,8 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
     it('changes the commitment when any policy field changes', async () => {
       const base = await run({});
       for (const override of [
-        { maxPerTx: '10000001' },
-        { maxDaily: '100000001' },
+        { maxPerTx: '100000001' },
+        { maxDaily: '1000000001' },
         { blockedAddresses: [ADDRESSES.otherToken] },
         { tokenWhitelist: [ADDRESSES.usdc, ADDRESSES.otherToken] },
         { allowedCategories: ['api-call', 'inference'] },
@@ -154,22 +176,22 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
     });
 
     it('rule 1: rejects an amount over the per-transaction ceiling', async () => {
-      const { signals } = await run({ amount: '10000001', dailySpentBefore: '0' });
+      const { signals } = await run({ amount: '100000001', dailySpentBefore: '0' });
       expect(signals.is_compliant).toBe('0');
     });
 
     it('rule 1: allows an amount exactly on the ceiling', async () => {
-      const { signals } = await run({ amount: '10000000', dailySpentBefore: '0' });
+      const { signals } = await run({ amount: '100000000', dailySpentBefore: '0' });
       expect(signals.is_compliant).toBe('1');
     });
 
     it('rule 2: rejects a payment that would cross the daily ceiling', async () => {
-      const { signals } = await run({ amount: '5000000', dailySpentBefore: '95000001' });
+      const { signals } = await run({ amount: '50000000', dailySpentBefore: '950000001' });
       expect(signals.is_compliant).toBe('0');
     });
 
     it('rule 2: allows a payment that lands exactly on the daily ceiling', async () => {
-      const { signals } = await run({ amount: '5000000', dailySpentBefore: '95000000' });
+      const { signals } = await run({ amount: '50000000', dailySpentBefore: '950000000' });
       expect(signals.is_compliant).toBe('1');
     });
 
@@ -178,17 +200,26 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
       expect(signals.is_compliant).toBe('0');
     });
 
-    it('rule 3: refuses the zero address outright rather than matching padding', async () => {
+    it('rule 3: refuses a zero token key outright rather than matching padding', async () => {
       // Padding slots hold zero, so a zero lookup key would match one. The
       // circuit rejects the witness instead of quietly answering 0 — the
-      // constraint is what lets the mask arrays go.
-      await expect(run({ token: '0x0000000000000000000000000000000000000000' }))
-        .rejects.toThrow();
+      // constraint is what lets the mask arrays go. No address maps to zero
+      // under f, so the raw field element is passed.
+      await expect(run({ tokenField: '0' })).rejects.toThrow();
     });
 
-    it('rule 4: refuses a zero recipient', async () => {
-      await expect(run({ recipient: '0x0000000000000000000000000000000000000000' }))
-        .rejects.toThrow();
+    it('rule 4: refuses a zero recipient key', async () => {
+      await expect(run({ recipientField: '0' })).rejects.toThrow();
+    });
+
+    it('rule 3 and 4: accept a G… payee and a C… token, and refuse them on the wrong list', async () => {
+      // Both kinds of address through f: an account as the payee with the SAC
+      // whitelisted passes; the same account blocked, or the XLM SAC as the
+      // token, fails.
+      expect((await run({ recipient: ADDRESSES.provider, token: ADDRESSES.usdc })).signals.is_compliant).toBe('1');
+      expect((await run({ recipient: ADDRESSES.provider, blockedAddresses: [ADDRESSES.provider] })).signals.is_compliant).toBe('0');
+      expect((await run({ token: ADDRESSES.otherToken })).signals.is_compliant).toBe('0');
+      expect((await run({ token: ADDRESSES.otherToken, tokenWhitelist: [ADDRESSES.usdc, ADDRESSES.otherToken] })).signals.is_compliant).toBe('1');
     });
 
     it('rule 4: rejects an unknown input signal, such as the removed blocked_addresses_mask', async () => {
@@ -219,7 +250,7 @@ describe.skipIf(!HAVE_WASM)('payment.circom', () => {
 
     it('reports zero when several rules fail at once', async () => {
       const { signals } = await run({
-        amount: '999999999',
+        amount: '9999999999',
         token: ADDRESSES.otherToken,
         recipient: ADDRESSES.blocked,
       });
