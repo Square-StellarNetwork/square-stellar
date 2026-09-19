@@ -7,6 +7,7 @@ import {
   deploymentFor,
   deploymentFromJson,
 } from "../src/deployments.js";
+import { networkFor } from "../src/stellar/index.js";
 
 /**
  * #49 asks that an address, a chain id and an RPC endpoint come from one place.
@@ -25,6 +26,8 @@ const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".mjs"];
 
 /** The one file allowed to spell these values out. */
 const DECLARATION_SITE = "packages/core/src/deployments.ts";
+/** And the one for the Stellar networks (#23): the profile docs/decisions/stellar-target.md fixes. */
+const STELLAR_DECLARATION_SITE = "packages/core/src/stellar/network.ts";
 
 function* sourceFiles(dir: string): Generator<string> {
   let entries: string[];
@@ -86,6 +89,21 @@ describe("one declaration site", () => {
 
   it("declares the Arc RPC endpoint once", () => {
     expect(filesContaining(/rpc\.testnet\.arc\.io/)).toEqual([DECLARATION_SITE]);
+  });
+
+  it("declares the Stellar testnet RPC endpoint once", () => {
+    expect(filesContaining(/soroban-testnet\.stellar\.org/)).toEqual([STELLAR_DECLARATION_SITE]);
+  });
+
+  it("declares the USDC issuer once, and the SAC id nowhere: it is derived", () => {
+    const testnet = networkFor("stellar:testnet");
+    expect(filesContaining(new RegExp(testnet.usdc!.issuer))).toEqual([STELLAR_DECLARATION_SITE]);
+    expect(filesContaining(new RegExp(testnet.usdc!.contractId))).toEqual([]);
+  });
+
+  it("declares no network passphrase: the SDK's Networks constants are the source", () => {
+    expect(filesContaining(/Test SDF Network ; September 2015/)).toEqual([]);
+    expect(filesContaining(/Standalone Network ; February 2017/)).toEqual([]);
   });
 });
 

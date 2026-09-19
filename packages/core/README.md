@@ -28,6 +28,106 @@ await square.submit({ jobId, deliverable: hashDeliverable(text), did: "did:aip:e
 The addresses come from the deployment record for the chain the clients declare; pass
 `deployment` to override, or when the clients carry no chain.
 
+## The Stellar client: `@squaresdk/core/stellar`
+
+Square is moving to Stellar ([docs/decisions/stellar-target.md](../../docs/decisions/stellar-target.md)).
+The Stellar client lives at `@squaresdk/core/stellar` beside the EVM client above while
+the Soroban contracts are written (#8–#19); the contract methods (`createJob`, `fund`,
+`submit`, …) join it as their interfaces land, from the generated bindings in
+`src/bindings`, and the EVM client leaves with them (#23). What is there today is
+everything a call needs that is not a contract's interface: the network, the deployment
+record, the signer, the simulate → sign → send → poll pipeline, error decoding, event
+decoding, amounts, and the USDC Stellar Asset Contract, whose interface is fixed.
+
+```ts
+import { Keypair } from "@stellar/stellar-sdk";
+import { connectSquareClient, deploymentFor, keypairSigner, usdcUnits } from "@squaresdk/core/stellar";
+
+const deployment = deploymentFor("stellar:testnet"); // or deploymentFromJson(record) until #45 deploys the testnet stack
+const square = await connectSquareClient({
+  deployment,
+  signer: keypairSigner(Keypair.fromSecret(secret), deployment.networkPassphrase),
+});
+
+if (!(await square.hasUsdcTrustline(square.account))) await square.trustUsdc();
+const balance = await square.usdcBalance(square.account); // base units, 7 decimals
+const budget = usdcUnits("150.00");                        // 1500000000n
+```
+
+**Every write is simulated first, and a refusal is the contract's own error, by name.**
+`read` simulates and answers the return value; `write` simulates, signs, sends and polls
+until the transaction is in a ledger, then answers `{ hash, ledger, result, events,
+feeCharged }`. A simulation the host refuses throws before anything is signed:
+`SquareContractError` when a contract raised a `#[contracterror]`, with `code`,
+`errorName` from that contract's error table, `raisedBy` (the contract in the call tree
+that raised it, read off the diagnostic events, so a hook's refusal through the kernel is
+the hook's) and the message the contract logged; `SimulationFailedError` for anything
+else the host refused. A transaction that fails in its ledger throws
+`TransactionFailedError`; one the network refuses at submission `TransactionSendError`;
+one not seen within `timeoutInSeconds` `TransactionPendingError`, with the hash to check.
+
+**`connectSquareClient` asks the endpoint which network it is.** `getNetwork` once,
+compared with the deployment record's passphrase; `DeploymentNetworkMismatchError` with
+`source: "endpoint"` otherwise, before anything is read. `createSquareClient` does the
+same lazily. A signer bound to another network is refused at construction
+(`source: "declared"`).
+
+**A signer is bound to one network.** `keypairSigner(keypair, passphrase)` refuses to
+sign a transaction for another passphrase and an authorization entry whose preimage
+carries another network id (`SignerNetworkMismatchError`). Any SEP-43 wallet object with
+an `address` is a `Signer` too, which is how the app (#39) and smart accounts (#27) plug
+in; `signAuthEntry` is only exercised when the signer is not the account submitting the
+transaction.
+
+**No approve, and a `G…` account needs a trustline.** `fund` will move USDC inside the
+client's own authorization ([auth-and-token-flow.md](../../docs/decisions/auth-and-token-flow.md)),
+so there is no allowance step anywhere here. An account cannot hold or receive USDC
+without a trustline: `usdcTrustline(address)` reads it off the ledger (`contract`,
+`missing`, or `open` with the balance), `assertUsdcReceivable` throws
+`TrustlineMissingError`, and `trustUsdc()` opens the signer's through the SAC's own
+`trust` (CAP-0073), one signed invocation. `usdcBalance` is the trustline's balance for an
+account and the SAC's entry for a contract.
+
+**Amounts are base units at 7 decimals, as bigints.** `usdcUnits("1.50")` is
+`15000000n`, `formatUsdc(15000000n)` is `"1.5"`, `assertTokenAmount` refuses what a
+contract refuses at its boundary (negative, or above the `u64` a record holds).
+`addressField(address)` is `f`, the field element the circuit and the compliance module
+compute for an address ([address-field-mapping.md](../../docs/decisions/address-field-mapping.md)).
+
+**The deployment record.** `deploymentFromJson` reads `contracts/deployments/<network>.json`
+as the deploy scripts (#19) write it:
+
+```json
+{
+  "network": "stellar:testnet",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "ledger": 4760307,
+  "contracts": { "square_job": "C…", "keeper_evaluator": "C…", "arbitration": "C…", "claim_market": "C…", "square_hook": "C…", "policy_registry": "C…", "compliance_module": "C…", "screening_registry": "C…", "groth16_verifier": "C…" },
+  "usdc": { "issuer": "G…", "contractId": "C…" },
+  "registries": { "identity": "C…", "reputation": "C…", "validation": "C…" }
+}
+```
+
+`contracts` names the crates; the compliance module, its verifier and the screening
+registry may be absent. Every id is checked to be a strkey of the right kind, the
+passphrase to be the network's, `usdc.contractId` to be the SAC of `USDC:issuer` on that
+network, and on testnet the issuer to be Circle's. `deploymentFor("stellar:testnet")`
+answers the copy compiled in here once the testnet stack is deployed (#45); a test
+asserts the copy and the file agree. `networkFor("stellar:testnet" | "stellar:local")`,
+or by passphrase, carries the rest: RPC, Horizon, Friendbot, the explorer, and USDC.
+
+**Events.** `decodeSquareEvents(source, deployment)` is the deployment's contract events
+in a `getTransaction` response, a `getEvents` page or raw `xdr.ContractEvent`s, decoded to
+native values with the contract's crate name, placed by ledger and event id (from
+`getEvents`, the indexer's cursor) or by position in the transaction. The typed schema
+per event arrives with `contracts/common` (#8).
+
+`npm test` covers this against real testnet answers captured as fixtures
+(`test/stellar/fixtures/`, `capture.mjs` refreshes them); `STELLAR_LIVE=1 npm test`
+also runs `test/stellar/live.test.ts` against testnet itself: the endpoint check, reads
+of the USDC SAC, a decoded refusal, and a real `trust` from an account Friendbot funds
+for the run.
+
 ## What is worth knowing
 
 **`connectSquareClient` asks the endpoint which chain it is; `createSquareClient` only

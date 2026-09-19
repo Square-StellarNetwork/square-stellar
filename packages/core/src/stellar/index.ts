@@ -1,0 +1,112 @@
+/**
+ * `@squaresdk/core/stellar`: the Stellar client (#23). It sits beside the EVM
+ * client at the package root while the Soroban contracts are written
+ * (#8–#19); the contract methods join it as their interfaces land, and the
+ * EVM client leaves with them.
+ */
+export {
+  addressField,
+  addressKind,
+  assertStellarAddress,
+  InvalidAddressError,
+  isAccountAddress,
+  isContractAddress,
+  isStellarAddress,
+  sameAddress,
+  type AddressField,
+  type AddressKind,
+} from "./address.js";
+export {
+  connectSquareClient,
+  createSquareClient,
+  SquareClient,
+  type ContractCall,
+  type ContractRef,
+  type SquareClientConfig,
+  type TransactionResult,
+  type UsdcTrustline,
+} from "./client.js";
+export {
+  AGENT_REGISTRIES,
+  contractIdOf,
+  contractsOf,
+  deploymentFileName,
+  deploymentFor,
+  deploymentFromJson,
+  deployments,
+  InvalidDeploymentError,
+  SQUARE_CONTRACTS,
+  UnknownDeploymentError,
+  type AgentRegistryName,
+  type SquareContractName,
+  type SquareDeployment,
+} from "./deployments.js";
+export {
+  ArchivedStateError,
+  contractErrorCodeIn,
+  contractErrorsIn,
+  decodeContractError,
+  decodeDiagnostics,
+  DeploymentNetworkMismatchError,
+  describeContractError,
+  EventNotFoundError,
+  NeedsMoreSignaturesError,
+  SAC_ERRORS,
+  SAC_TRUSTLINE_MISSING,
+  SimulationFailedError,
+  SquareContractError,
+  TransactionFailedError,
+  TransactionPendingError,
+  TransactionSendError,
+  TrustlineMissingError,
+  type ContractErrorContext,
+  type ContractErrorTable,
+  type DecodedContractError,
+  type Diagnostic,
+} from "./errors.js";
+export { decodeSquareEvents, eventsNamed, ledgerOfEventId, type SquareEvent } from "./events.js";
+export {
+  isStellarNetworkId,
+  networkFor,
+  networkIdOf,
+  networks,
+  passphraseOf,
+  STELLAR_LOCAL_FRIENDBOT_URL,
+  STELLAR_LOCAL_HORIZON_URL,
+  STELLAR_LOCAL_PASSPHRASE,
+  STELLAR_LOCAL_RPC_URL,
+  STELLAR_PUBNET_PASSPHRASE,
+  STELLAR_TESTNET_EXPLORER_URL,
+  STELLAR_TESTNET_FRIENDBOT_URL,
+  STELLAR_TESTNET_HORIZON_URL,
+  STELLAR_TESTNET_PASSPHRASE,
+  STELLAR_TESTNET_RPC_URL,
+  UnknownNetworkError,
+  USDC_TESTNET_ISSUER,
+  usdcAsset,
+  type StellarCaip2,
+  type StellarNetworkId,
+  type StellarNetworkProfile,
+  type UsdcAsset,
+} from "./network.js";
+export {
+  keypairSigner,
+  networkIdHash,
+  SignerNetworkMismatchError,
+  WalletRequiredError,
+  type SignAuthEntry,
+  type Signer,
+  type SignTransaction,
+} from "./signer.js";
+export {
+  AmountError,
+  assertTokenAmount,
+  formatUnits,
+  formatUsdc,
+  formatXlm,
+  MAX_TOKEN_AMOUNT,
+  STROOPS_PER_XLM,
+  USDC_DECIMALS,
+  USDC_UNIT,
+  usdcUnits,
+} from "./usdc.js";

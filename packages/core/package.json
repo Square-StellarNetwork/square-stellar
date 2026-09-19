@@ -1,7 +1,7 @@
 {
   "name": "@squaresdk/core",
   "version": "0.1.0",
-  "description": "Integration library for Square settlement on Arc: typed clients, embedded ABIs, spec hashing and event decoding.",
+  "description": "Integration library for Square settlement: typed clients, spec hashing and event decoding. The Stellar client is at ./stellar; the EVM client at the root leaves as the Soroban contracts land.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -19,6 +19,10 @@
     "./abi": {
       "types": "./dist/abi/index.d.ts",
       "default": "./dist/abi/index.js"
+    },
+    "./stellar": {
+      "types": "./dist/stellar/index.d.ts",
+      "default": "./dist/stellar/index.js"
     }
   },
   "files": [
@@ -39,6 +43,7 @@
   },
   "dependencies": {
     "@squaresdk/did-resolver": "file:../did-resolver",
+    "@stellar/stellar-sdk": "16.3.0",
     "canonicalize": "^2.0.0",
     "viem": "^2.21.0"
   },

@@ -1,0 +1,12 @@
+{
+  "publicKey": "GA4MQJWHCVOJ2APTN5UOJ7557MDF245LLB6B7PIZN6H2G7YF5LN2IOY7",
+  "entries": [
+    {
+      "key": "AAAAAAAAAAA4yCbHFVydAfNvaOT/vfsGXXOrWHwfvRlvj6N/BerbpA==",
+      "xdr": "AAAAAAAAAAA4yCbHFVydAfNvaOT/vfsGXXOrWHwfvRlvj6N/BerbpAAAABdIdugAAEiwkQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAA",
+      "lastModifiedLedgerSeq": 4763793,
+      "extXdr": "AAAAAA=="
+    }
+  ],
+  "latestLedger": 4763793
+}
