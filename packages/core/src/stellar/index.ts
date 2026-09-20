@@ -17,6 +17,28 @@ export {
   type AddressKind,
 } from "./address.js";
 export {
+  AnchorError,
+  AnchorNeedsMoreError,
+  authenticateWithAnchor,
+  discoverAnchor,
+  quotePrice,
+  SEP6_FINAL_STATUSES,
+  Sep6Client,
+  sep38Asset,
+  type Anchor,
+  type AnchorCurrency,
+  type AnchorOptions,
+  type AnchorSession,
+  type Sep6AssetInfo,
+  type Sep6DepositInstructions,
+  type Sep6DepositParams,
+  type Sep6Info,
+  type Sep6Transaction,
+  type Sep6WithdrawInstructions,
+  type Sep6WithdrawParams,
+  type Sep38Price,
+} from "./anchor.js";
+export {
   connectSquareClient,
   createSquareClient,
   SquareClient,

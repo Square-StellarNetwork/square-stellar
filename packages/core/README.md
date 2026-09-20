@@ -155,6 +155,27 @@ transaction. `kernelEvents(events)` types the kernel's among them (`job_created`
 picks one; a kernel event whose shape is not the contract's is `MalformedEventError`,
 since that means the deployment is not the contract the bindings came from.
 
+**The fiat rail: an anchor (SEP-1, SEP-10, SEP-6, SEP-38).** `discoverAnchor(homeDomain)`
+reads the anchor's `stellar.toml`; `authenticateWithAnchor(anchor, signer)` signs in with
+the wallet — the SEP-10 challenge is checked (the anchor's signing key, this account,
+this home domain, this network) and signed with the same `signTransaction` every kernel
+write uses — and answers a session with the anchor's token; `new Sep6Client(session)`
+asks for a `deposit` (fiat in, the asset lands in the wallet) or a `withdraw` (the asset
+out, fiat to a bank account), reads a `transaction` and `follow`s it to a final status;
+`quotePrice` is the SEP-38 rate. The anchor's request for customer fields (SEP-12) comes
+back as `AnchorNeedsMoreError` with the fields it named. On testnet the TRY⇄USDC anchor is
+`tr-mock-anchor.fly.dev`, a sandbox that simulates the bank and pays real testnet USDC
+(`test/stellar/anchor-live.test.ts` runs the rail against it); the wallet needs its USDC
+trustline first (`trustToken` on a deployment whose token is USDC).
+
+```ts
+const anchor = await discoverAnchor("tr-mock-anchor.fly.dev", { expectedNetwork: deployment.networkPassphrase });
+const session = await authenticateWithAnchor(anchor, signer);
+const sep6 = new Sep6Client(session);
+const deposit = await sep6.deposit({ assetCode: "USDC", type: "bank_account", amount: "1000" }); // deposit.how: the IBAN and the reference
+const done = await sep6.follow(deposit.id!, { onStatus: (t) => console.log(t.status) });   // … completed, USDC in the wallet
+```
+
 `npm test` covers this against real testnet answers captured as fixtures
 (`test/stellar/fixtures/`, `capture.mjs` refreshes them) and against return values
 encoded with the bindings' spec; `STELLAR_LIVE=1 npm test` also runs
