@@ -24,7 +24,7 @@ function oneJob(description: string): { chain: ProviderChain; job: SquareJob; su
     client: CLIENT,
     provider: agentKey.publicKey(),
     status: JobStatus.Funded,
-    budget: 20_000_000n,
+    budget: 25_000_000n, // the capability's price, 2.5 XLM: a job funded below it is left alone
     platformFeeBps: 250,
     challengeWindow: 30n,
     createdAt: 1n,
@@ -85,6 +85,17 @@ describe("hostStellarAgent", () => {
     expect(request.messages).toEqual([{ role: "user", content: "the state of Soroban" }]);
     expect(request.tools ?? []).toEqual([]);
     expect(hosted.agent.provider.job(1n)).toMatchObject({ capability: "research.brief", content: "Soroban is live on Protocol 28.", status: "Submitted" });
+  });
+
+  it("leaves alone a job funded below the capability's price, without asking the model", async () => {
+    const { chain, job, submits } = oneJob("the state of Soroban");
+    job.budget = 24_999_999n;
+    const model = scriptedModel([{ text: "never asked" }]);
+    const hosted = hostStellarAgent(config(), { deployment, signer: keypairSigner(agentKey, STELLAR_TESTNET_PASSPHRASE), chain, anthropic: model });
+    await hosted.agent.provider.tick();
+    expect(submits).toEqual([]);
+    expect(model.requests).toEqual([]);
+    expect(hosted.agent.provider.job(1n)).toMatchObject({ done: true, attempts: 0, error: expect.stringMatching(/costs 25000000/) });
   });
 
   it("serves the capability the description names, with the rest as the input", async () => {
