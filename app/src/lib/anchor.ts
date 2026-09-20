@@ -22,6 +22,7 @@ import { useCallback, useState } from "react";
 import { useSquare } from "./square";
 import { anchorDomain, anchorFiat, network, NETWORK_ID } from "./stellar";
 import { useWallet } from "./wallet";
+import { thrownMessage, walletErrorMessage } from "./walletError";
 
 const addressScVal = (address: string): xdr.ScVal => nativeToScVal(address, { type: "address" });
 
@@ -179,8 +180,12 @@ function anchorNeedsMore(error: AnchorNeedsMoreError): string {
 export function describeAnchorError(error: unknown): string {
   if (error instanceof AnchorNeedsMoreError) return anchorNeedsMore(error);
   if (error instanceof Error && error.name === "AnchorError") return error.message;
-  if (error instanceof Error) return error.message;
-  return "The anchor did not answer.";
+  // Signing in to the anchor is the wallet's work (SEP-10), so a wallet that
+  // has stopped answering fails here — and blaming the anchor for it sends
+  // someone looking in the wrong place.
+  const wallet = walletErrorMessage(error);
+  if (wallet !== null) return wallet;
+  return thrownMessage(error) ?? "The anchor did not answer.";
 }
 
 // ---- the trustline the anchor's asset needs --------------------------------

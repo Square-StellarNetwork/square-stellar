@@ -18,6 +18,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { errorCopy } from "./errorCopy";
 import { shortHash } from "./format";
 import { explorerLink } from "./stellar";
+import { thrownMessage, walletErrorMessage } from "./walletError";
 
 export type TxState =
   | { status: "idle" }
@@ -68,8 +69,12 @@ export function describeError(error: unknown): string {
     return `The network has not answered after ${error.waitedSeconds}s. It may still land, so check before sending it again (${shortHash(error.hash)}).`;
   }
   if (error instanceof WalletRequiredError) return "Connect a wallet first: this sends a transaction.";
-  if (error instanceof Error) return error.message;
-  return "Unknown error";
+  // The wallet is an extension, and it rejects with its own object rather
+  // than an Error; this reads both, and names the two failures that are the
+  // extension's doing rather than the chain's.
+  const wallet = walletErrorMessage(error);
+  if (wallet !== null) return wallet;
+  return thrownMessage(error) ?? "Unknown error";
 }
 
 /** On Stellar the network is chosen inside the wallet, so this only says so. */
