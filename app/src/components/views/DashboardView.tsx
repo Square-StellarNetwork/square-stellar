@@ -15,6 +15,7 @@ import { MetricCard } from "@/components/MetricCard";
 import { PanelCard } from "@/components/PanelCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
+import { StartHere } from "@/components/StartHere";
 import { StatusPill, phaseTone } from "@/components/StatusPill";
 import { TabBar } from "@/components/TabBar";
 import { escrowFlow, feeTotals, phaseBreakdown } from "@/lib/charts";
@@ -175,6 +176,8 @@ export function DashboardView() {
         </div>
         <p className="text-caption text-graphite">{caption}</p>
       </section>
+
+      <StartHere jobCount={jobs.length} />
 
       {address === null ? null : <ActionInbox jobs={jobs} address={address} now={now} scanned={scanned} />}
 

@@ -31,13 +31,13 @@ export function Footer() {
             New job
           </Link>
           <Link href="/agents" className={item}>
-            Agents
+            Agents <span className="text-ash">(phase 2)</span>
           </Link>
           <Link href="/policy" className={item}>
-            Policy
+            Policy <span className="text-ash">(phase 2)</span>
           </Link>
           <Link href="/network" className={item}>
-            Network
+            Network <span className="text-ash">(phase 2)</span>
           </Link>
         </div>
         <div className="flex flex-col gap-3">

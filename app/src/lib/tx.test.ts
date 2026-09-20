@@ -16,11 +16,20 @@ import { describeError, switchNetworkGuidance } from "./tx";
 const hash = "1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8";
 
 describe("describeError", () => {
-  it("gives a refused call the contract's own error name", () => {
+  it("says what a refusal means and what to do, and keeps the name to look up", () => {
     const decoded = { contract: "square_job", contractId: undefined, code: 2, errorName: "WrongStatus", detail: undefined };
-    const error = new SquareContractError("square_job", "fund", "HostError: Error(Contract, #2)", [], decoded);
-    expect(describeError(error)).toContain("WrongStatus");
-    expect(describeError(error)).toContain("square_job");
+    const message = describeError(new SquareContractError("square_job", "fund", "HostError: Error(Contract, #2)", [], decoded));
+    expect(message).toContain("moved on");
+    expect(message).toContain("Reload");
+    expect(message).toContain("(WrongStatus)");
+    // The contract's own sentence — `square_job.fund: WrongStatus` — is what
+    // this replaces: accurate, and unreadable to someone new to this.
+    expect(message).not.toContain("square_job.fund");
+  });
+
+  it("falls back to the contract's message for a name the table does not know", () => {
+    const decoded = { contract: "square_job", contractId: undefined, code: 99, errorName: "Invented", detail: undefined };
+    expect(describeError(new SquareContractError("square_job", "fund", "HostError", [], decoded))).toContain("square_job");
   });
 
   it("names the call and the reason when the simulation failed without a contract error", () => {
@@ -40,7 +49,9 @@ describe("describeError", () => {
 
   it("explains a missing trustline in terms of what it stops", () => {
     const account = Keypair.random().publicKey();
-    expect(describeError(new TrustlineMissingError(account, "USDC"))).toContain("cannot receive");
+    const message = describeError(new TrustlineMissingError(account, "USDC"));
+    expect(message).toContain("has not opted in");
+    expect(message).toContain("USDC");
   });
 
   it("points at a transaction that landed and applied nothing", () => {
@@ -50,7 +61,9 @@ describe("describeError", () => {
   });
 
   it("says a pending transaction may still land", () => {
-    expect(describeError(new TransactionPendingError(hash, 60))).toContain("still pending");
+    const message = describeError(new TransactionPendingError(hash, 60));
+    expect(message).toContain("not answered after 60s");
+    expect(message).toContain("check before sending it again");
   });
 
   it("asks for a wallet when the call would send one", () => {
