@@ -1,7 +1,8 @@
 "use client";
 
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartColors, chartFont, DAY, formatCompactUsdc, HOUR, type FlowPoint, type FlowSeries } from "@/lib/charts";
+import { chartColors, chartFont, DAY, formatCompactAmount, HOUR, type FlowPoint, type FlowSeries } from "@/lib/charts";
+import { usePaymentTokenLabel } from "@/lib/square";
 import { ChartFrame, ChartPlaceholder } from "./ChartFrame";
 
 const HEIGHT = 260;
@@ -21,7 +22,7 @@ function fullLabel(time: number, bucket: number): string {
   return `${day}, ${from} to ${to}`;
 }
 
-function FlowTooltip({ active, payload, bucket }: { active?: boolean; payload?: { payload: FlowPoint }[]; bucket: number }) {
+function FlowTooltip({ active, payload, bucket, token }: { active?: boolean; payload?: { payload: FlowPoint }[]; bucket: number; token: string }) {
   const point = payload?.[0]?.payload;
   if (!active || !point) return null;
   return (
@@ -29,13 +30,13 @@ function FlowTooltip({ active, payload, bucket }: { active?: boolean; payload?: 
       <p className="text-caption font-medium text-carbon">{fullLabel(point.time, bucket)}</p>
       <dl className="mt-1 grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 text-caption">
         <dt className="text-graphite">Funded</dt>
-        <dd className="tabular-nums text-carbon">{formatCompactUsdc(point.funded)} USDC</dd>
+        <dd className="tabular-nums text-carbon">{formatCompactAmount(point.funded)} {token}</dd>
         <dt className="text-graphite">Submitted</dt>
-        <dd className="tabular-nums text-carbon">{formatCompactUsdc(point.submitted)} USDC</dd>
+        <dd className="tabular-nums text-carbon">{formatCompactAmount(point.submitted)} {token}</dd>
         <dt className="text-graphite">Funded so far</dt>
-        <dd className="tabular-nums text-carbon">{formatCompactUsdc(point.cumulativeFunded)} USDC</dd>
+        <dd className="tabular-nums text-carbon">{formatCompactAmount(point.cumulativeFunded)} {token}</dd>
         <dt className="text-graphite">Submitted so far</dt>
-        <dd className="tabular-nums text-carbon">{formatCompactUsdc(point.cumulativeSubmitted)} USDC</dd>
+        <dd className="tabular-nums text-carbon">{formatCompactAmount(point.cumulativeSubmitted)} {token}</dd>
       </dl>
     </div>
   );
@@ -43,14 +44,15 @@ function FlowTooltip({ active, payload, bucket }: { active?: boolean; payload?: 
 
 export function EscrowFlowChart({ series, scanned, loading, error }: { series: FlowSeries | null; scanned: number; loading: boolean; error?: string | null }) {
   const bucketLabel = series?.bucket === HOUR ? "hour" : "day";
+  const token = usePaymentTokenLabel();
   return (
     <ChartFrame
       title="Escrow flow"
-      description={`USDC entering escrow per ${bucketLabel}, with the running totals funded and submitted.`}
+      description={`${token || "The payment token"} entering escrow per ${bucketLabel}, with the running totals funded and submitted.`}
       legend={[
-        { label: "Funded", color: chartColors.lavender, value: series ? `${formatCompactUsdc(series.totalFunded)} USDC` : undefined },
+        { label: "Funded", color: chartColors.lavender, value: series ? `${formatCompactAmount(series.totalFunded)} ${token}` : undefined },
         { label: "Cumulative funded", color: chartColors.carbon },
-        { label: "Cumulative submitted", color: chartColors.sky, dashed: true, value: series ? `${formatCompactUsdc(series.totalSubmitted)} USDC` : undefined },
+        { label: "Cumulative submitted", color: chartColors.sky, dashed: true, value: series ? `${formatCompactAmount(series.totalSubmitted)} ${token}` : undefined },
       ]}
       caption={`Built from the fundedAt and submittedAt timestamps of the ${scanned} most recent job records, in your local time.`}
     >
@@ -83,10 +85,10 @@ export function EscrowFlowChart({ series, scanned, loading, error }: { series: F
                 tickLine={false}
                 axisLine={false}
                 width={52}
-                tickFormatter={(value: number) => formatCompactUsdc(value)}
+                tickFormatter={(value: number) => formatCompactAmount(value)}
                 tick={{ fill: chartColors.ash, fontSize: 12, fontFamily: chartFont }}
               />
-              <Tooltip cursor={{ fill: chartColors.mist }} content={<FlowTooltip bucket={series.bucket} />} />
+              <Tooltip cursor={{ fill: chartColors.mist }} content={<FlowTooltip bucket={series.bucket} token={token} />} />
               <Area
                 type="monotone"
                 dataKey="cumulativeFunded"

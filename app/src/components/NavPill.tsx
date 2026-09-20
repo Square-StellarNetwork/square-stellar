@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Logo } from "./Logo";
 import { WalletButton } from "./WalletButton";
-import { DOCS_URL } from "@/lib/wagmi";
+import { DOCS_URL } from "@/lib/stellar";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },

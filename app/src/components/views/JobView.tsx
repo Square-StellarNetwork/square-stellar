@@ -1,56 +1,58 @@
 "use client";
 
-import { agentFromDid, hashDeliverable, JobStatus, Outcome, specHashFromDescription, type SquareClient, type TransactionResult } from "@squaresdk/core";
-import { formatDid, InvalidDidError } from "@squaresdk/did-resolver";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState, type ReactNode } from "react";
-import { isAddressEqual, zeroHash, type Address } from "viem";
-import { useAccount } from "wagmi";
+import { useState, type ReactNode } from "react";
+
 import { AddressLink } from "@/components/AddressLink";
-import { AmountUsdc } from "@/components/AmountUsdc";
-import { SegmentBar } from "@/components/charts/SegmentBar";
+import { Amount } from "@/components/Amount";
+import { SegmentBar, type Segment } from "@/components/charts/SegmentBar";
 import { SettlementClock } from "@/components/charts/SettlementClock";
-import { Chip } from "@/components/Chip";
-import { CompliancePanel } from "@/components/CompliancePanel";
 import { EmptyState } from "@/components/EmptyState";
-import { PartiesPanel } from "@/components/PartiesPanel";
-import { SettlementRecord } from "@/components/SettlementRecord";
 import { Field, inputClass } from "@/components/Field";
-import { GhostButton } from "@/components/GhostButton";
-import { JsonEditor } from "@/components/JsonEditor";
 import { PanelCard } from "@/components/PanelCard";
+import { PartiesPanel } from "@/components/PartiesPanel";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { StatusPill, listingTone, outcomeTone, phaseTone } from "@/components/StatusPill";
+import { SectionHeading } from "@/components/SectionHeading";
+import { StatusPill, phaseTone } from "@/components/StatusPill";
+import { WalletButton } from "@/components/WalletButton";
+import { budgetAvailable, finalizeAvailable, fundAvailable, refundAvailable, rejectAvailable, submitAvailable, windowClosed } from "@/lib/actions";
 import { addressInputError, readAddressInput } from "@/lib/address";
-import { readEligibilityInput } from "@/lib/eligibility";
-import { challengeWindowClosed, disputeAvailable, keeperEvaluates as evaluatedByKeeper, refundAvailable, submitAvailable, submitDeadline } from "@/lib/actions";
-import { chartColors, formatCompactUsdc, payoutSplit, settlementClock } from "@/lib/charts";
-import { formatBps, formatCountdown, formatDuration, formatTimestamp, formatUsdc, isZeroAddress, parseUsdc, shortAddress, shortHash, statusLabel } from "@/lib/format";
-import {
-  countVotes,
-  jobPhase,
-  LISTING_LABELS,
-  OUTCOME_LABELS,
-  PHASE_LABELS,
-  useJob,
-  useNow,
-  usePositions,
-  useSquare,
-  type JobDetail,
-} from "@/lib/square";
-import { usePolicyOnChain } from "@/lib/policy";
-import { checkSpec } from "@/lib/spec";
+import { chartColors, formatCompactAmount, payoutSplit, settlementClock } from "@/lib/charts";
+import { formatAmount, formatBps, formatCountdown, formatDuration, formatTimestamp, parseAmount, shortHash } from "@/lib/format";
+import { platformFee, type JobSummary } from "@/lib/job";
+import { jobPhase, PHASE_LABELS, useJob, useNow, usePaymentTokenLabel, usePositions, useSquare } from "@/lib/square";
+import { isTestnet } from "@/lib/stellar";
 import { describeError, useTx } from "@/lib/tx";
-import { activeChain, deployment } from "@/lib/wagmi";
+import { useWallet } from "@/lib/wallet";
+import type { SquareClient, TransactionResult } from "@squaresdk/core/stellar";
+
+/** The kernel's `MAX_TEXT`: the longest description or rejection reason it stores, in bytes. */
+const MAX_TEXT_BYTES = 256;
+
+/** sha256 of what the user typed: a real digest of a real note, computed here. */
+async function digestOf(text: string): Promise<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+}
+
+function hexOf(bytes: Uint8Array): `0x${string}` {
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function bytes32FromInput(value: string): Uint8Array | null {
+  const hex = value.trim().replace(/^0x/, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i += 1) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+}
 
 interface ActionContext {
-  square: SquareClient;
   id: bigint;
+  square: SquareClient | null;
+  address: string | null;
   busy: boolean;
-  canSend: boolean;
-  reason: string | null;
-  run: <T extends TransactionResult>(label: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  run: <T>(label: string, fn: () => Promise<TransactionResult<T>>) => Promise<TransactionResult<T> | undefined>;
 }
 
 function ActionCard({
@@ -70,6 +72,7 @@ function ActionCard({
   disabled?: boolean;
   ctx: ActionContext;
 }) {
+  const unconnected = ctx.address === null || ctx.square === null;
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-fog bg-paper-white p-6">
       <div>
@@ -78,994 +81,436 @@ function ActionCard({
       </div>
       {children}
       <div className="flex flex-wrap items-center gap-3">
-        <PrimaryButton size="sm" onClick={onClick} disabled={disabled || ctx.busy || !ctx.canSend}>
+        <PrimaryButton size="sm" onClick={onClick} disabled={disabled || ctx.busy || unconnected}>
           {buttonLabel}
         </PrimaryButton>
-        {ctx.reason ? <span className="text-caption text-ash">{ctx.reason}</span> : null}
+        {unconnected ? <span className="text-caption text-ash">Connect a wallet to sign.</span> : null}
       </div>
     </div>
   );
 }
 
-function SimpleAction({
+function SetBudgetAction({ ctx, token, current }: { ctx: ActionContext; token: string; current: bigint }) {
+  const [value, setValue] = useState("");
+  const amount = value.trim().length === 0 ? null : parseAmount(value);
+  return (
+    <ActionCard
+      title="Agree the budget"
+      description={
+        <>
+          <span>The client or the provider may set it while the job is Open. It is what funding moves.</span>
+          <span>{current > 0n ? `Currently ${formatAmount(current)} ${token}.` : "No budget set yet."}</span>
+        </>
+      }
+      buttonLabel="Set budget"
+      disabled={amount === null || amount <= 0n}
+      ctx={ctx}
+      onClick={() => {
+        const { square, address } = ctx;
+        if (square === null || address === null || amount === null) return;
+        void ctx.run("Set budget", () => square.setBudget(ctx.id, amount));
+      }}
+    >
+      <Field label={`Budget (${token})`} htmlFor="set-budget" error={value.trim().length > 0 && amount === null ? "Enter an amount with up to seven decimals." : null}>
+        <input id="set-budget" inputMode="decimal" className={inputClass} value={value} onChange={(event) => setValue(event.target.value)} placeholder="0.00" />
+      </Field>
+    </ActionCard>
+  );
+}
+
+function FundAction({ ctx, token, budget, balance }: { ctx: ActionContext; token: string; budget: bigint; balance: bigint | undefined }) {
+  const short = balance !== undefined && balance < budget;
+  return (
+    <ActionCard
+      title="Fund the escrow"
+      description={
+        <>
+          <span>
+            One signature moves {formatAmount(budget)} {token} into the kernel and fixes the fee basis points on the job. There is no approval step: the transfer is
+            authorized inside the same call.
+          </span>
+          <span>The expected budget is sent with it, so a budget changed in between is refused rather than funded by surprise.</span>
+          {short ? (
+            <span className="text-magenta">
+              This wallet holds {formatAmount(balance ?? 0n)} {token}, less than the budget. {isTestnet ? "Friendbot funds a testnet account with XLM." : "Top it up before funding."}
+            </span>
+          ) : null}
+        </>
+      }
+      buttonLabel={`Fund ${formatAmount(budget)} ${token}`}
+      disabled={budget <= 0n || short}
+      ctx={ctx}
+      onClick={() => {
+        const { square, address } = ctx;
+        if (square === null || address === null) return;
+        void ctx.run("Fund", () => square.fund(ctx.id, budget));
+      }}
+    />
+  );
+}
+
+function SubmitAction({ ctx, deadline, now }: { ctx: ActionContext; deadline: number; now: number }) {
+  const [deliverable, setDeliverable] = useState("");
+  const [agent, setAgent] = useState("");
+  const digest = bytes32FromInput(deliverable);
+  const agentId = agent.trim().length === 0 ? null : Number.parseInt(agent.trim(), 10);
+  const agentError = agent.trim().length > 0 && (agentId === null || !Number.isInteger(agentId) || agentId < 0) ? "An agent id is a whole number." : null;
+  return (
+    <ActionCard
+      title="Submit the deliverable"
+      description={
+        <>
+          <span>The provider submits the 32-byte hash of the work. Only the hash is on chain; the work itself travels your own way.</span>
+          <span>
+            The deadline is {formatTimestamp(deadline)} ({formatCountdown(deadline, now)}), the expiry less the settlement horizon.
+          </span>
+        </>
+      }
+      buttonLabel="Submit"
+      disabled={digest === null || agentError !== null}
+      ctx={ctx}
+      onClick={() => {
+        const { square, address } = ctx;
+        if (square === null || address === null || digest === null) return;
+        void ctx.run("Submit", () => square.submit(ctx.id, digest));
+      }}
+    >
+      <Field
+        label="Deliverable hash"
+        htmlFor="deliverable"
+        error={deliverable.trim().length > 0 && digest === null ? "32 bytes of hex, with or without 0x." : null}
+        hint="sha256 or keccak256 of what you delivered."
+      >
+        <input id="deliverable" className={inputClass} value={deliverable} onChange={(event) => setDeliverable(event.target.value)} placeholder="0x…" spellCheck={false} />
+      </Field>
+      <Field label="Agent id (optional)" htmlFor="agent-id" error={agentError} hint="The 8004 agent you submit as. The hook checks that it is yours.">
+        <input id="agent-id" inputMode="numeric" className={inputClass} value={agent} onChange={(event) => setAgent(event.target.value)} placeholder="0" />
+      </Field>
+    </ActionCard>
+  );
+}
+
+function NoteAction({
+  ctx,
   title,
   description,
   buttonLabel,
   label,
+  placeholder,
   send,
-  ctx,
 }: {
+  ctx: ActionContext;
   title: string;
   description: ReactNode;
   buttonLabel: string;
   label: string;
-  send: (square: SquareClient) => Promise<TransactionResult>;
-  ctx: ActionContext;
+  placeholder: string;
+  send: (square: SquareClient, note: string) => Promise<TransactionResult>;
 }) {
+  const [note, setNote] = useState("");
+  const used = new TextEncoder().encode(note.trim()).length;
+  const tooLong = used > MAX_TEXT_BYTES;
+  const ready = note.trim().length > 0 && !tooLong;
   return (
     <ActionCard
       title={title}
       description={description}
       buttonLabel={buttonLabel}
-      onClick={() => void ctx.run(label, () => send(ctx.square))}
+      disabled={!ready}
       ctx={ctx}
-    />
-  );
-}
-
-function SetProviderAction({ ctx }: { ctx: ActionContext }) {
-  const [value, setValue] = useState("");
-  const parsed = readAddressInput(value);
-  const provider = parsed.kind === "valid" && !isZeroAddress(parsed.address) ? parsed.address : null;
-  return (
-    <ActionCard
-      title="Set provider"
-      description="The job was opened without a provider, so funding reverts with ProviderNotSet. Only the client may name one, only while the job is open, and only once."
-      buttonLabel="Set provider"
-      disabled={provider === null}
       onClick={() => {
-        if (provider !== null) void ctx.run("Set provider", () => ctx.square.setProvider(ctx.id, provider));
+        const { square } = ctx;
+        if (square === null || !ready) return;
+        void ctx.run(label, () => send(square, note.trim()));
       }}
-      ctx={ctx}
     >
       <Field
-        label="Provider address"
-        htmlFor="provider"
-        hint="An agent's wallet on this chain. It is fixed once set."
-        error={addressInputError(parsed)}
+        label="Reason"
+        htmlFor={`${label}-note`}
+        hint={`The text itself is stored on the job, so keep it short and free of anything private. ${used}/${MAX_TEXT_BYTES} bytes.`}
+        error={tooLong ? `The kernel refuses a reason over ${MAX_TEXT_BYTES} bytes (TextTooLong).` : null}
       >
-        <input
-          id="provider"
-          className={`${inputClass} font-mono text-[13px]`}
-          value={value}
-          onChange={(event) => setValue(event.target.value.trim())}
-          placeholder="0x"
-          autoComplete="off"
-          spellCheck={false}
-        />
-      </Field>
-      {parsed.kind === "checksum" ? (
-        <div>
-          <GhostButton size="sm" onClick={() => setValue(parsed.suggestion)}>
-            Use {shortAddress(parsed.suggestion)}
-          </GhostButton>
-        </div>
-      ) : null}
-    </ActionCard>
-  );
-}
-
-function SetBudgetAction({ ctx, detail }: { ctx: ActionContext; detail: JobDetail }) {
-  const [value, setValue] = useState("");
-  const amount = parseUsdc(value);
-  return (
-    <ActionCard
-      title="Set budget"
-      description="Agree the price while the job is open. The amount is escrowed at funding and capped at 2^64 base units."
-      buttonLabel="Set budget"
-      disabled={amount === null || amount === 0n}
-      onClick={() => {
-        if (amount !== null) void ctx.run("Set budget", () => ctx.square.setBudget(ctx.id, amount));
-      }}
-      ctx={ctx}
-    >
-      <Field
-        label="Budget (USDC)"
-        htmlFor="budget"
-        hint={detail.record.budget > 0n ? <>Current budget {formatUsdc(detail.record.budget)} USDC</> : "No budget set yet"}
-        error={value.length > 0 && amount === null ? "Enter an amount with up to six decimals." : null}
-      >
-        <input id="budget" inputMode="decimal" className={inputClass} value={value} onChange={(event) => setValue(event.target.value)} placeholder="0.00" />
+        <textarea id={`${label}-note`} className={`${inputClass} min-h-20`} value={note} onChange={(event) => setNote(event.target.value)} placeholder={placeholder} />
       </Field>
     </ActionCard>
   );
 }
 
-function parseAgent(input: string): { agentId?: bigint; did?: string; error?: string } {
-  const trimmed = input.trim();
-  if (trimmed.length === 0) return {};
-  if (trimmed.startsWith("did:")) {
-    try {
-      agentFromDid(trimmed);
-      return { did: trimmed };
-    } catch (error) {
-      return { error: error instanceof InvalidDidError ? error.message : describeError(error) };
-    }
-  }
-  if (!/^\d+$/.test(trimmed)) return { error: "Enter a numeric 8004 agent id or a did:aip identifier." };
-  return { agentId: BigInt(trimmed) };
-}
-
-function SubmitAction({ ctx, detail, now }: { ctx: ActionContext; detail: JobDetail; now: number }) {
-  const [content, setContent] = useState("");
-  const [agent, setAgent] = useState("");
-  const deliverable = useMemo(() => (content.length > 0 ? hashDeliverable(content) : null), [content]);
-  const parsedAgent = useMemo(() => parseAgent(agent), [agent]);
-  const horizon = detail.record.settlementHorizon;
-  const open = submitAvailable(detail.record, now);
+function Row({ label, children, muted = false }: { label: string; children: ReactNode; muted?: boolean }) {
   return (
-    <ActionCard
-      title="Submit"
-      description={
-        horizon > 0
-          ? `Posts the keccak256 hash of the deliverable. Binding an 8004 agent lets the hook write reputation for it at settlement. The deadline is ${formatTimestamp(submitDeadline(detail.record))}, which is the expiry less the settlement horizon of ${formatDuration(horizon)} snapshotted on this job.`
-          : `Posts the keccak256 hash of the deliverable. Binding an 8004 agent lets the hook write reputation for it at settlement. This job's evaluator published no settlement horizon, so the deadline is the expiry itself, ${formatTimestamp(detail.record.expiredAt)}.`
-      }
-      buttonLabel="Submit deliverable"
-      disabled={deliverable === null || parsedAgent.error !== undefined || !open}
-      onClick={() => {
-        if (deliverable === null) return;
-        const { agentId, did } = parsedAgent;
-        void ctx.run("Submit", () => ctx.square.submit({ jobId: ctx.id, deliverable, agentId, did }));
-      }}
-      ctx={ctx}
-    >
-      <Field
-        label="Deliverable content"
-        htmlFor="deliverable"
-        hint={deliverable ? <span className="break-all tabular-nums">Hash {deliverable}</span> : "The text is hashed locally; only the hash goes on chain."}
-      >
-        <textarea id="deliverable" rows={5} className={inputClass} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste the deliverable text" />
-      </Field>
-      <Field label="Agent (optional)" htmlFor="agent" hint="8004 agent id, or a did:aip identifier." error={parsedAgent.error ?? null}>
-        <input id="agent" className={inputClass} value={agent} onChange={(event) => setAgent(event.target.value)} placeholder="Agent id or did:aip identifier" />
-      </Field>
-      {open ? null : (
-        <p className="text-caption text-magenta" role="alert">
-          The deadline of {formatTimestamp(submitDeadline(detail.record))} has passed; the expiry is now closer than this job's settlement horizon of {formatDuration(horizon)}, so submit would revert with ExpiryTooShort.
-        </p>
-      )}
-    </ActionCard>
-  );
-}
-
-function VoteAction({ ctx, detail }: { ctx: ActionContext; detail: JobDetail }) {
-  const [outcome, setOutcome] = useState<"complete" | "reject">("complete");
-  const [bps, setBps] = useState("10000");
-  const parsedBps = /^\d+$/.test(bps) ? Number(bps) : Number.NaN;
-  const bpsValid = Number.isInteger(parsedBps) && parsedBps >= 1 && parsedBps <= 10_000;
-  const votes = countVotes(detail.dispute.voted);
-  return (
-    <ActionCard
-      title="Vote"
-      description={`${votes} of ${detail.threshold} required votes cast by the ${detail.arbiters.length} arbiters of set v${detail.dispute.setVersion}. The first resolution to reach the threshold decides.`}
-      buttonLabel="Cast vote"
-      disabled={outcome === "complete" && !bpsValid}
-      onClick={() => {
-        if (outcome === "complete") {
-          if (bpsValid) void ctx.run("Vote", () => ctx.square.vote(ctx.id, Outcome.Complete, parsedBps));
-        } else {
-          void ctx.run("Vote", () => ctx.square.vote(ctx.id, Outcome.Reject, 0));
-        }
-      }}
-      ctx={ctx}
-    >
-      <fieldset className="flex flex-col gap-3">
-        <legend className="text-caption font-medium text-carbon">Resolution</legend>
-        <label className="flex items-center gap-3 text-body">
-          <input type="radio" name="outcome" className="accent-lavender" checked={outcome === "complete"} onChange={() => setOutcome("complete")} />
-          Complete, the provider receives a share of the net payout
-        </label>
-        {outcome === "complete" ? (
-          <Field label="Provider share in basis points (1 to 10000)" htmlFor="bps" error={bpsValid ? null : "Enter an integer between 1 and 10000."}>
-            <input id="bps" inputMode="numeric" className={inputClass} value={bps} onChange={(event) => setBps(event.target.value)} />
-          </Field>
-        ) : null}
-        <label className="flex items-center gap-3 text-body">
-          <input type="radio" name="outcome" className="accent-lavender" checked={outcome === "reject"} onChange={() => setOutcome("reject")} />
-          Reject, the client is refunded in full
-        </label>
-      </fieldset>
-    </ActionCard>
-  );
-}
-
-/**
- * The evaluator on the record settles the job itself when it is not the
- * keeper: complete pays the provider (a share of the net when the hook
- * resolves the payout), reject refunds the client. The reason is a bytes32
- * the kernel emits with the event; a note typed here is hashed the way a
- * deliverable is, so the words stay off chain and the hash stands for them.
- */
-function EvaluateAction({ ctx, detail, payoutRouted }: { ctx: ActionContext; detail: JobDetail; payoutRouted: boolean }) {
-  const submitted = detail.record.status === JobStatus.Submitted;
-  const [outcome, setOutcome] = useState<"complete" | "reject">(submitted ? "complete" : "reject");
-  const [bps, setBps] = useState("10000");
-  const [note, setNote] = useState("");
-  const parsedBps = /^\d+$/.test(bps) ? Number(bps) : Number.NaN;
-  const bpsValid = Number.isInteger(parsedBps) && parsedBps >= 0 && parsedBps <= 10_000;
-  const reason = useMemo(() => (note.trim().length > 0 ? hashDeliverable(note.trim()) : zeroHash), [note]);
-  const completing = submitted && outcome === "complete";
-  return (
-    <ActionCard
-      title="Evaluate"
-      description={
-        submitted
-          ? "You are the evaluator on this job's record, so the settlement is yours: complete pays the provider from escrow and reject refunds the client. Either one is final."
-          : "You are the evaluator on this job's record. Nothing has been submitted yet; rejecting now refunds the budget to the client."
-      }
-      buttonLabel={completing ? "Complete and pay" : "Reject and refund"}
-      disabled={completing && !bpsValid}
-      onClick={() => {
-        if (completing) {
-          if (!bpsValid) return;
-          const optParams = payoutRouted && parsedBps !== 10_000 ? ctx.square.completeOptParams({ providerBps: parsedBps }) : "0x";
-          void ctx.run("Complete", () => ctx.square.complete(ctx.id, reason, optParams));
-        } else {
-          void ctx.run("Reject", () => ctx.square.reject(ctx.id, reason));
-        }
-      }}
-      ctx={ctx}
-    >
-      {submitted ? (
-        <fieldset className="flex flex-col gap-3">
-          <legend className="text-caption font-medium text-carbon">Decision</legend>
-          <label className="flex items-center gap-3 text-body">
-            <input type="radio" name="evaluation" className="accent-lavender" checked={outcome === "complete"} onChange={() => setOutcome("complete")} />
-            Complete: pay the provider
-          </label>
-          <label className="flex items-center gap-3 text-body">
-            <input type="radio" name="evaluation" className="accent-lavender" checked={outcome === "reject"} onChange={() => setOutcome("reject")} />
-            Reject: refund the client
-          </label>
-        </fieldset>
-      ) : null}
-      {completing && payoutRouted ? (
-        <Field
-          label="Provider share (basis points)"
-          htmlFor="evaluate-bps"
-          hint="10000 pays the whole net payout to the payee; less returns the rest to the client. The hook routes the split."
-          error={bpsValid ? null : "A whole number from 0 to 10000."}
-        >
-          <input id="evaluate-bps" inputMode="numeric" className={inputClass} value={bps} onChange={(event) => setBps(event.target.value)} />
-        </Field>
-      ) : null}
-      {completing && !payoutRouted ? <p className="text-caption text-graphite">This job's hook does not resolve the payout, so completing pays the whole net payout to the provider.</p> : null}
-      <Field label="Reason (optional)" htmlFor="evaluate-reason" hint={note.trim().length > 0 ? <span className="break-all tabular-nums">Written on chain as {reason}</span> : "A note for the record; only its keccak256 hash goes on chain, as the event's reason."}>
-        <textarea id="evaluate-reason" rows={2} className={inputClass} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Why the work is accepted or refused" />
-      </Field>
-    </ActionCard>
-  );
-}
-
-function ReceivableOutcomes({ detail, now, audience }: { detail: JobDetail; now: number; audience: "buyer" | "seller" }) {
-  const paid = audience === "buyer" ? "you receive" : "the buyer receives";
-  const disputed = detail.disputed || detail.dispute.disputedAt !== 0;
-  const windowOpen = detail.challengeEnd > 0 && now < detail.challengeEnd;
-  return (
-    <>
-      <p>The claim is paid at finalize and nowhere else, and what finalize pays is not settled while the client can still challenge the submission.</p>
-      <ul className="list-disc space-y-1 pl-4">
-        <li>If the client disputes and the arbiters reject the job, the whole budget goes back to the client and {paid} nothing.</li>
-        <li>If the arbiters decide a split instead, {paid} the provider share of the net payout, which is below the face value, and the rest goes back to the client.</li>
-        <li>If the job expires with nothing settled, the refund credits the client and not the payee, because claimRefund is not hookable; the kernel allows it only once the evaluator can no longer resolve the payout.</li>
-      </ul>
-      <p>
-        {disputed
-          ? "This job is already disputed, so the arbiters decide what finalize pays."
-          : windowOpen
-            ? `The challenge window is open with ${formatCountdown(detail.challengeEnd, now).toLowerCase()}, closing ${formatTimestamp(detail.challengeEnd)}. The client may still dispute until then.`
-            : detail.challengeEnd > 0
-              ? `The challenge window closed ${formatTimestamp(detail.challengeEnd)} without a dispute, so the client can no longer open one and finalize pays the whole net payout to the payee.`
-              : "The keeper evaluator does not hold this job, so no challenge window is published for it and the evaluator on the record decides the payout."}
-      </p>
-      <p>
-        {audience === "buyer"
-          ? "The discount on the face value is the price of these outcomes."
-          : "The discount you give on the face value is what the buyer is paid for carrying these outcomes."}
-      </p>
-    </>
-  );
-}
-
-function ListClaimAction({ ctx, detail, now }: { ctx: ActionContext; detail: JobDetail; now: number }) {
-  const [value, setValue] = useState("");
-  const price = parseUsdc(value);
-  const face = detail.netPayout;
-  const valid = price !== null && price > 0n && price < face;
-  return (
-    <ActionCard
-      title="List the receivable"
-      description={
-        <>
-          <p>Sells the right to this job's net payout. The buyer becomes the payee at finalize; reputation stays with the agent.</p>
-          <ReceivableOutcomes detail={detail} now={now} audience="seller" />
-        </>
-      }
-      buttonLabel="List claim"
-      disabled={!valid}
-      onClick={() => {
-        if (price !== null && valid) void ctx.run("List claim", () => ctx.square.listClaim(ctx.id, price));
-      }}
-      ctx={ctx}
-    >
-      <Field
-        label="Price (USDC)"
-        htmlFor="price"
-        hint={<>Face value {formatUsdc(face)} USDC; the price must be below it.</>}
-        error={value.length > 0 && !valid ? "Enter a price above zero and below the face value." : null}
-      >
-        <input id="price" inputMode="decimal" className={inputClass} value={value} onChange={(event) => setValue(event.target.value)} placeholder="0.00" />
-      </Field>
-    </ActionCard>
-  );
-}
-
-function BuyClaimAction({ ctx, detail, now, account }: { ctx: ActionContext; detail: JobDetail; now: number; account: Address }) {
-  const [value, setValue] = useState("");
-  const parsed = readEligibilityInput(value);
-  const { listing, buyerRoot } = detail;
-  const issuedToAnother = parsed.kind === "valid" && parsed.buyer !== undefined && !isAddressEqual(parsed.buyer, account);
-  const eligibility = parsed.kind === "valid" && !issuedToAnother ? parsed.eligibility : null;
-  const listOpen = buyerRoot !== null && buyerRoot !== zeroHash;
-  return (
-    <ActionCard
-      title="Buy the receivable"
-      description={
-        <>
-          <p>
-            Pays the seller {formatUsdc(listing.price)} USDC for a face value of {formatUsdc(listing.faceValue)} USDC, and makes you the payee at finalize. The
-            transaction is bound to this price and reverts if the seller relists at another one. An approval is sent first if the allowance is short.
-          </p>
-          <p>
-            Only a buyer the client&apos;s policy approved can buy. The client publishes the root of its buyer list and issues each buyer a salt and a path; the
-            market rebuilds your leaf from the connected account, so an entry issued to another address is refused.
-          </p>
-          <ReceivableOutcomes detail={detail} now={now} audience="buyer" />
-        </>
-      }
-      buttonLabel={`Buy for ${formatUsdc(listing.price)} USDC`}
-      disabled={!listOpen || eligibility === null}
-      onClick={() => {
-        if (listOpen && eligibility !== null) {
-          void ctx.run("Buy claim", () => ctx.square.buyClaim(ctx.id, eligibility, { expectedPrice: listing.price }));
-        }
-      }}
-      ctx={ctx}
-    >
-      {buyerRoot === null ? (
-        <p className="text-caption text-graphite" role="status">
-          The buyer list could not be read from this market, so the purchase is not offered. A market deployed before square#30 has no list to read.
-        </p>
-      ) : buyerRoot === zeroHash ? (
-        <p className="text-caption text-graphite" role="status">
-          The client has approved no buyers, so this receivable cannot be sold.
-        </p>
-      ) : (
-        <Field
-          label="Your entry on the client's buyer list (JSON)"
-          htmlFor="eligibility"
-          error={
-            parsed.kind === "malformed"
-              ? parsed.message
-              : issuedToAnother && parsed.kind === "valid"
-                ? `This entry was issued to ${parsed.buyer}, not to the connected account.`
-                : null
-          }
-        >
-          <JsonEditor
-            id="eligibility"
-            value={value}
-            onChange={setValue}
-            error={parsed.kind === "malformed" ? parsed.message : null}
-            placeholder={'{\n  "salt": "0x...",\n  "proof": ["0x..."]\n}'}
-            minHeight={120}
-          />
-        </Field>
-      )}
-    </ActionCard>
-  );
-}
-
-function SpecCheck({ description }: { description: string }) {
-  const [text, setText] = useState("");
-  const result = useMemo(() => checkSpec(text, description), [text, description]);
-  return (
-    <PanelCard
-      title="Check the spec"
-      description="The chain carries the hash, not the words. Paste the spec text you were sent and this page canonicalizes and hashes it the same way the form did, so you can see whether it is the text this job was opened with."
-    >
-      <Field
-        label="Spec (JSON)"
-        htmlFor="spec-check"
-        error={result.kind === "invalid" ? result.message : null}
-        hint={<span className="break-all font-mono text-[12px]">On chain: {description}</span>}
-      >
-        <JsonEditor
-          id="spec-check"
-          value={text}
-          onChange={setText}
-          error={result.kind === "invalid" ? result.message : null}
-          placeholder={'{\n  "task": "...",\n  "deliverable": "...",\n  "acceptance": "..."\n}'}
-          minHeight={180}
-        />
-      </Field>
-      {result.kind === "match" ? (
-        <p className="mt-4 flex items-center gap-2 text-caption text-carbon" role="status">
-          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-mint" />
-          This text hashes to the description on chain, so it is the spec this job was opened with.
-        </p>
-      ) : null}
-      {result.kind === "mismatch" ? (
-        <p className="mt-4 flex flex-wrap items-center gap-2 text-caption text-magenta" role="status">
-          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-magenta" />
-          <span className="break-all">This text hashes to spec:{result.hash}, which is not the description on chain. Ask for the exact text that was hashed.</span>
-        </p>
-      ) : null}
-    </PanelCard>
-  );
-}
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt className="text-caption text-graphite">{label}</dt>
-      <dd className="mt-1 break-words text-body text-carbon">{children}</dd>
+    <div className="flex items-baseline justify-between gap-4 border-b border-fog py-3 last:border-b-0">
+      <dt className="shrink-0 text-caption text-graphite">{label}</dt>
+      <dd className={`min-w-0 text-right text-body tabular-nums ${muted ? "text-ash" : "text-carbon"}`}>{children}</dd>
     </div>
   );
 }
 
-function Timeline({ detail, now }: { detail: JobDetail; now: number }) {
-  const record = detail.record;
-  const terminal = record.status >= JobStatus.Completed;
-  const items: { label: string; at?: number; state: "done" | "pending" | "future"; note?: string }[] = [];
-  items.push({ label: "Created", at: record.createdAt, state: "done" });
-  items.push({ label: "Funded", at: record.fundedAt > 0 ? record.fundedAt : undefined, state: record.fundedAt > 0 ? "done" : "future" });
-  items.push({ label: "Submitted", at: record.submittedAt > 0 ? record.submittedAt : undefined, state: record.submittedAt > 0 ? "done" : "future" });
-  if (record.submittedAt > 0 && detail.challengeEnd > 0) {
-    items.push({ label: "Challenge window ends", at: detail.challengeEnd, state: now >= detail.challengeEnd ? "done" : "pending" });
+function Actions({ detail, ctx, token, now, balance }: { detail: JobSummary; ctx: ActionContext; token: string; now: number; balance: bigint | undefined }) {
+  const { address } = ctx;
+  const cards: ReactNode[] = [];
+
+  if (budgetAvailable(detail, address)) cards.push(<SetBudgetAction key="budget" ctx={ctx} token={token} current={detail.budget} />);
+  if (fundAvailable(detail, address, now)) cards.push(<FundAction key="fund" ctx={ctx} token={token} budget={detail.budget} balance={balance} />);
+  if (submitAvailable(detail, address, now)) cards.push(<SubmitAction key="submit" ctx={ctx} deadline={detail.expiredAt} now={now} />);
+  if (finalizeAvailable(detail, now)) {
+    cards.push(
+      <ActionCard
+        key="finalize"
+        title="Finalize"
+        description={
+          <>
+            <span>The challenge window closed and the client did not reject. The provider is credited the budget less the platform fee, and the fee goes to the kernel&apos;s owner.</span>
+            <span>Anyone may send this call — it names nobody — so the provider never depends on the client acting.</span>
+          </>
+        }
+        buttonLabel="Finalize"
+        ctx={ctx}
+        onClick={() => {
+          const { square } = ctx;
+          if (square === null) return;
+          void ctx.run("Finalize", () => square.finalize(ctx.id));
+        }}
+      />,
+    );
   }
-  if (detail.dispute.disputedAt !== 0) {
-    items.push({ label: "Disputed", at: detail.dispute.disputedAt, state: "done", note: `Bond ${formatUsdc(detail.dispute.bond)} USDC` });
-    items.push({
-      label: "Resolve by",
-      at: detail.dispute.resolveBy,
-      state: detail.dispute.outcome !== 0 || now >= detail.dispute.resolveBy ? "done" : "pending",
-      note: OUTCOME_LABELS[detail.dispute.outcome] ?? `Outcome ${detail.dispute.outcome}`,
-    });
+  if (rejectAvailable(detail, address, now)) {
+    cards.push(
+      <NoteAction
+        key="reject"
+        ctx={ctx}
+        title="Reject"
+        description={
+          detail.status === "Open"
+            ? "Nothing is escrowed yet. Rejecting closes the job."
+            : detail.status === "Funded"
+              ? "Rejecting closes the job and credits the whole budget back to you, to be withdrawn."
+              : `The window is open until ${formatTimestamp(detail.finalizeAfter)}. Rejecting inside it takes the whole budget back; after it, only finalize is left.`
+        }
+        buttonLabel="Reject"
+        label="Reason"
+        placeholder="Why the work is refused"
+        send={(square, note) => square.reject(ctx.id, note)}
+      />,
+    );
   }
-  if (terminal) {
-    items.push({ label: statusLabel(record.status), state: "done", note: "The kernel stores no settlement timestamp; the explorer has the block." });
-  } else {
-    items.push({ label: "Expires", at: record.expiredAt, state: now >= record.expiredAt ? "done" : "future" });
+  if (refundAvailable(detail, now)) {
+    cards.push(
+      <ActionCard
+        key="refund"
+        title="Claim the refund"
+        description="The job expired without a submission. Anyone may crank this; the budget is credited back to the client, who withdraws it."
+        buttonLabel="Claim refund"
+        ctx={ctx}
+        onClick={() => {
+          const { square } = ctx;
+          if (square === null) return;
+          void ctx.run("Claim refund", () => square.claimRefund(ctx.id));
+        }}
+      />,
+    );
   }
+
+  if (cards.length === 0) {
+    return (
+      <PanelCard title="Nothing to do here" description="No action on this job is open to the connected wallet right now.">
+        <p className="text-caption text-graphite">
+          {address === null ? "Connect a wallet to see what it can do." : "Another party acts next, or the job has settled."}
+        </p>
+      </PanelCard>
+    );
+  }
+  return <div className="flex flex-col gap-4">{cards}</div>;
+}
+
+function Withdrawable({ ctx, token }: { ctx: ActionContext; token: string }) {
+  const positions = usePositions(ctx.address ?? undefined);
+  const owed = positions.data?.withdrawable ?? 0n;
+  if (ctx.address === null || owed === 0n) return null;
   return (
-    <ol className="flex flex-col">
-      {items.map((item, index) => (
-        <li key={`${item.label}-${index}`} className="relative flex gap-4 pb-6 last:pb-0">
-          {index < items.length - 1 ? <span aria-hidden="true" className="absolute left-[5px] top-4 h-full w-px bg-fog" /> : null}
-          <span
-            aria-hidden="true"
-            className={`mt-1.5 size-[11px] shrink-0 rounded-full border-2 border-paper-white ${item.state === "done" ? "bg-carbon" : item.state === "pending" ? "bg-amber" : "bg-fog"}`}
-          />
-          <div className="flex flex-col">
-            <span className={`text-body font-medium ${item.state === "future" ? "text-ash" : "text-carbon"}`}>{item.label}</span>
-            <span className="text-caption tabular-nums text-graphite">
-              {item.at !== undefined ? formatTimestamp(item.at) : item.state === "future" ? "Not yet" : ""}
-              {item.at !== undefined && item.state === "pending" ? ` (${formatCountdown(item.at, now)})` : ""}
-            </span>
-            {item.note ? <span className="text-caption text-ash">{item.note}</span> : null}
-          </div>
-        </li>
-      ))}
-    </ol>
+    <ActionCard
+      title="Withdraw what you are owed"
+      description={`The kernel credits a ledger rather than pushing: ${formatAmount(owed)} ${token} is yours to take, from this job or any other.`}
+      buttonLabel="Withdraw"
+      ctx={ctx}
+      onClick={() => {
+        const { square, address } = ctx;
+        if (square === null || address === null) return;
+        void ctx.run("Withdraw", () => square.withdrawTo(address, owed));
+      }}
+    />
   );
 }
 
-function sameAddress(a: Address | undefined, b: Address | undefined): boolean {
-  return a !== undefined && b !== undefined && isAddressEqual(a, b);
+/**
+ * Where the budget goes, at the basis points the record carries. Before
+ * funding these are the current parameters; from `fund` on they are the ones
+ * snapshotted on the job, and after a decision the net is split at the share
+ * the settlement decided.
+ */
+function PayoutPanel({ detail, token }: { detail: JobSummary; token: string }) {
+  const split = payoutSplit(detail);
+  const amount = (value: number) => `${formatCompactAmount(value)} ${token}`;
+  const segments: Segment[] = [
+    { key: "provider", label: "To the provider", value: split.payout, color: chartColors.lavender, display: amount(split.payout) },
+    { key: "platform", label: `Platform fee ${formatBps(detail.platformFeeBps)}`, value: split.platformFee, color: chartColors.carbon, display: amount(split.platformFee) },
+  ];
+  return (
+    <PanelCard
+      title="Payout split"
+      description={
+        detail.status === "Completed"
+          ? "Settled. The provider was credited the budget less the fee, and the fee went to the kernel's owner."
+          : detail.status === "Rejected" || detail.status === "Expired"
+            ? "Closed without a payout: the whole budget was credited back to the client."
+            : "The basis points are the job's own, so the payout is known before the window closes."
+      }
+    >
+      <SegmentBar segments={segments} total={split.budget} ariaLabel={`How the ${amount(split.budget)} budget of job ${detail.id.toString()} divides`} />
+    </PanelCard>
+  );
 }
 
+function Facts({ detail, token }: { detail: JobSummary; token: string }) {
+  const fee = platformFee(detail);
+  return (
+    <PanelCard title="The record" description="What the kernel stores for this job.">
+      <dl className="flex flex-col">
+        <Row label="Budget">
+          <Amount value={detail.budget} />
+        </Row>
+        <Row label={`Platform fee ${formatBps(detail.platformFeeBps)}`}>
+          <Amount value={fee} />
+        </Row>
+        <Row label="Payout on finalize">
+          <Amount value={detail.budget - fee} />
+        </Row>
+        <Row label="Created">{formatTimestamp(detail.createdAt)}</Row>
+        <Row label="Funded" muted={detail.fundedAt === 0}>
+          {detail.fundedAt === 0 ? "Not funded" : formatTimestamp(detail.fundedAt)}
+        </Row>
+        <Row label="Submitted" muted={detail.submittedAt === 0}>
+          {detail.submittedAt === 0 ? "Not submitted" : formatTimestamp(detail.submittedAt)}
+        </Row>
+        <Row label="Expires">{formatTimestamp(detail.expiredAt)}</Row>
+        <Row label="Challenge window">{formatDuration(detail.challengeWindow)}</Row>
+        <Row label="Finalize after" muted={detail.finalizeAfter === 0}>
+          {detail.finalizeAfter === 0 ? "Not submitted" : formatTimestamp(detail.finalizeAfter)}
+        </Row>
+        <Row label="Deliverable" muted={detail.deliverable === null}>
+          {detail.deliverable === null ? "Not submitted" : <span title={hexOf(detail.deliverable)}>{shortHash(hexOf(detail.deliverable))}</span>}
+        </Row>
+        <Row label="Provider">
+          <AddressLink address={detail.provider} />
+        </Row>
+        <Row label="Paid in">{token}</Row>
+      </dl>
+    </PanelCard>
+  );
+}
+
+/**
+ * One job, and what the connected wallet can do with it (#39). Every action is
+ * the contract call behind it: the gates here are the same conditions the
+ * kernel enforces, so a button that is shown is a call that simulates.
+ */
 export function JobView() {
   const params = useSearchParams();
   const raw = params.get("id");
   const id = raw !== null && /^\d+$/.test(raw) ? BigInt(raw) : null;
-  const job = useJob(id);
-  const { address, chainId } = useAccount();
-  const positions = usePositions(address);
   const now = useNow();
+  const job = useJob(id);
   const square = useSquare();
+  const { address } = useWallet();
   const { run, busy } = useTx();
-  // The connected wallet's policy, read for the Fund action: on a hook with
-  // a compliance module a client with no commitment cannot be released to,
-  // so funding would pay for work and refund it (square#350).
-  const policy = usePolicyOnChain(address);
+  const token = usePaymentTokenLabel();
+  const positions = usePositions(address ?? undefined);
 
   if (id === null) {
     return (
-      <EmptyState
-        title="Pick a job"
-        hint="Open a job from the dashboard, or add ?id= followed by the job number to this address."
-        action={<GhostButton href="/dashboard">Go to the dashboard</GhostButton>}
-      />
+      <div className="flex flex-col gap-8">
+        <SectionHeading title="Job" description="Open a job from the dashboard." />
+        <EmptyState title="No job id" hint="This page takes an id, as /job?id=1." action={<PrimaryButton href="/dashboard">Back to the dashboard</PrimaryButton>} />
+      </div>
     );
   }
-  if (job.isPending) return <EmptyState title={`Reading job #${id.toString()} from the chain`} />;
-  if (job.isError) return <EmptyState title="The chain read failed" hint={describeError(job.error)} />;
-  if (!job.data) {
+
+  if (job.isPending) {
     return (
-      <EmptyState
-        title={`No job with id ${id.toString()}`}
-        hint="Job ids start at 1 and run up to the current jobCounter."
-        action={<GhostButton href="/dashboard">Go to the dashboard</GhostButton>}
-      />
+      <div className="flex flex-col gap-8">
+        <SectionHeading title={`Job #${id.toString()}`} description="Reading the job from the chain." />
+        <EmptyState title="Reading the chain" />
+      </div>
+    );
+  }
+
+  if (job.isError) {
+    return (
+      <div className="flex flex-col gap-8">
+        <SectionHeading title={`Job #${id.toString()}`} description="The chain read failed." />
+        <EmptyState title="The chain read failed" hint={describeError(job.error)} />
+      </div>
     );
   }
 
   const detail = job.data;
-  const record = detail.record;
-  const phase = jobPhase({ status: record.status, challengeEnd: detail.challengeEnd, disputed: detail.disputed }, now);
-  const specHash = specHashFromDescription(record.description);
-  const isClient = sameAddress(address, record.client);
-  const isProvider = sameAddress(address, record.provider);
-  const isEvaluator = sameAddress(address, record.evaluator);
-  const keeperEvaluates = evaluatedByKeeper(record, deployment.keeperEvaluator);
-  const hookIsSquare = isAddressEqual(record.hook, deployment.squareHook);
-  const windowClosed = challengeWindowClosed(detail.challengeEnd, now);
-  const neverDisputed = detail.keeperDispute.disputedAt === 0;
-  const disputeOpen = detail.dispute.disputedAt !== 0 && detail.dispute.outcome === 0;
-  const isArbiter = address !== undefined && detail.arbiters.some((arbiter) => isAddressEqual(arbiter, address));
-  const listing = detail.listing;
-  const canSend = address !== undefined && chainId === activeChain.id;
-  const reason = address === undefined ? "Connect a wallet to send this transaction." : chainId !== activeChain.id ? `Switch the wallet to ${activeChain.name}.` : null;
-  const ctx: ActionContext = { square, id, busy, canSend, reason, run };
+  if (detail === null || detail === undefined) {
+    return (
+      <div className="flex flex-col gap-8">
+        <SectionHeading title={`Job #${id.toString()}`} description="No such job." />
+        <EmptyState title="No such job" hint="The kernel's job counter is below this id." action={<PrimaryButton href="/dashboard">Back to the dashboard</PrimaryButton>} />
+      </div>
+    );
+  }
 
-  const showSetProvider = record.status === JobStatus.Open && isClient && isZeroAddress(record.provider);
-  const showSetBudget = record.status === JobStatus.Open && (isClient || isProvider);
-  const showFund = record.status === JobStatus.Open && isClient && record.budget > 0n && !isZeroAddress(record.provider) && now < record.expiredAt;
-  const showSubmit = record.status === JobStatus.Funded && isProvider && now < record.expiredAt;
-  const showFinalize = record.status === JobStatus.Submitted && keeperEvaluates && neverDisputed && windowClosed;
-  const showDispute =
-    isClient &&
-    neverDisputed &&
-    disputeAvailable({ evaluator: record.evaluator, status: record.status, challengeEnd: detail.challengeEnd }, deployment.keeperEvaluator, now);
-  const showVote = disputeOpen && isArbiter;
-  const showLapse = disputeOpen && now >= detail.dispute.resolveBy;
-  const showFinalizeDecided =
-    record.status === JobStatus.Submitted &&
-    detail.keeperDispute.disputedAt !== 0 &&
-    !detail.keeperDispute.resolved &&
-    (detail.dispute.outcome === Outcome.Complete || detail.dispute.outcome === Outcome.Lapsed);
-  const payoutRouted = record.hookResolvesPayout && hookIsSquare;
-  const showList = record.status === JobStatus.Submitted && isProvider && payoutRouted && listing.status !== 1 && listing.status !== 2 && detail.netPayout > 0n;
-  const showBuy = listing.status === 1 && payoutRouted && address !== undefined && !sameAddress(address, listing.seller) && !isProvider && !isClient;
-  const showCancel = listing.status === 1 && sameAddress(address, listing.seller);
-  const showReject = record.status === JobStatus.Open && isClient;
-  const showEvaluate = isEvaluator && !keeperEvaluates && (record.status === JobStatus.Submitted || record.status === JobStatus.Funded);
-  const expired = now >= record.expiredAt;
-  const showClaimRefund = refundAvailable(record, deployment.keeperEvaluator, now);
-  const expiryHeldByKeeper = expired && record.status === JobStatus.Submitted && keeperEvaluates;
-  const withdrawable = positions.data?.withdrawable ?? 0n;
-  const bondWithdrawable = positions.data?.bondWithdrawable ?? 0n;
-  const showRecordExpiry = record.status === JobStatus.Expired && detail.agentId !== null && !detail.expiryRecorded;
-  const showSettleBond = record.status === JobStatus.Expired && detail.dispute.disputedAt !== 0 && !detail.dispute.bondSettled;
-  const anyAction =
-    showSetProvider ||
-    showSetBudget ||
-    showFund ||
-    showSubmit ||
-    showFinalize ||
-    showDispute ||
-    showVote ||
-    showLapse ||
-    showFinalizeDecided ||
-    showList ||
-    showBuy ||
-    showCancel ||
-    showReject ||
-    showEvaluate ||
-    showClaimRefund ||
-    withdrawable > 0n ||
-    bondWithdrawable > 0n ||
-    showRecordExpiry;
-
-  const feeSnapshot = record.fundedAt > 0 ? `${formatBps(record.platformFeeBP)} platform, ${formatBps(record.evaluatorFeeBP)} evaluator` : "Taken at funding";
+  const phase = jobPhase(detail, now);
+  const ctx: ActionContext = { id, square, address, busy, run };
   const clock = settlementClock({
-    createdAt: record.createdAt,
-    fundedAt: record.fundedAt,
-    submittedAt: record.submittedAt,
-    expiredAt: record.expiredAt,
-    challengeEnd: detail.challengeEnd,
-    disputedAt: detail.dispute.disputedAt,
-    resolveBy: detail.dispute.resolveBy,
-    status: record.status,
+    createdAt: detail.createdAt,
+    fundedAt: detail.fundedAt,
+    submittedAt: detail.submittedAt,
+    expiredAt: detail.expiredAt,
+    finalizeAfter: detail.finalizeAfter,
+    status: detail.status,
     now,
   });
-  const split = record.fundedAt > 0 ? payoutSplit(record, detail.netPayout) : null;
 
   return (
-    <div className="flex flex-col gap-16">
-      <section className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-heading font-medium tabular-nums text-carbon">Job #{id.toString()}</h1>
-          <StatusPill label={PHASE_LABELS[phase]} tone={phaseTone[phase]} />
-          {detail.dispute.disputedAt !== 0 ? <StatusPill label={`Dispute ${OUTCOME_LABELS[detail.dispute.outcome] ?? detail.dispute.outcome}`} tone={outcomeTone[detail.dispute.outcome] ?? "neutral"} /> : null}
-          {listing.status !== 0 ? <StatusPill label={`Claim ${LISTING_LABELS[listing.status] ?? listing.status}`} tone={listingTone[listing.status] ?? "neutral"} /> : null}
-          <div className="ml-auto flex items-center gap-2">
-            <GhostButton size="sm" href="/dashboard">
-              Back to jobs
-            </GhostButton>
-          </div>
-        </div>
-        <p className="text-caption text-graphite">
-          Status {statusLabel(record.status)} on SquareJob; read again every ten seconds.
-          {record.status === JobStatus.Submitted && detail.challengeEnd > 0 && !detail.disputed ? ` Challenge window ${formatCountdown(detail.challengeEnd, now).toLowerCase()}.` : ""}
-        </p>
-      </section>
+    <div className="flex flex-col gap-12">
+      <SectionHeading
+        title={`Job #${id.toString()}`}
+        description={detail.description}
+        actions={
+          <span className="flex items-center gap-3">
+            <StatusPill label={PHASE_LABELS[phase]} tone={phaseTone[phase]} />
+            {address === null ? <WalletButton /> : null}
+          </span>
+        }
+      />
 
-      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <PanelCard title="Record" description="Every field below is the on-chain job record.">
-          <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
-            <Row label="Client">
-              <AddressLink address={record.client} />
-            </Row>
-            <Row label="Provider">
-              <AddressLink address={record.provider} />
-            </Row>
-            <Row label="Evaluator">
-              <span className="flex flex-wrap items-center gap-2">
-                <AddressLink address={record.evaluator} />
-                {keeperEvaluates ? <Chip>KeeperEvaluator</Chip> : null}
-              </span>
-            </Row>
-            <Row label="Hook">
-              <span className="flex flex-wrap items-center gap-2">
-                <AddressLink address={record.hook} />
-                {hookIsSquare ? <Chip>SquareHook</Chip> : null}
-              </span>
-            </Row>
-            <Row label="Budget">
-              <AmountUsdc value={record.budget} />
-            </Row>
-            <Row label="Net payout">{record.fundedAt > 0 ? <AmountUsdc value={detail.netPayout} /> : <span className="text-ash">Fixed at funding</span>}</Row>
-            <Row label="Fee snapshot">{feeSnapshot}</Row>
-            <Row label="Payee of record">
-              <span className="flex flex-wrap items-center gap-2">
-                <AddressLink address={detail.payee} />
-                {listing.status === 2 ? <Chip dot="mint">Receivable buyer</Chip> : null}
-              </span>
-            </Row>
-            {record.status === JobStatus.Completed ? (
-              <Row label="Settled to">
-                <span className="flex flex-wrap items-center gap-2">
-                  <AddressLink address={record.payee} />
-                  <span className="text-caption text-graphite">{formatBps(record.providerBps)} of net</span>
-                </span>
-              </Row>
-            ) : null}
-            <Row label="Deliverable">
-              {record.submittedAt > 0 ? (
-                <span className="tabular-nums" title={record.deliverable}>
-                  {shortHash(record.deliverable)}
-                </span>
-              ) : (
-                <span className="text-ash">Not submitted</span>
-              )}
-            </Row>
-            <Row label={specHash ? "Spec hash" : "Description"}>
-              {record.description.length === 0 ? (
-                <span className="text-ash">Empty</span>
-              ) : (
-                <span className="break-all tabular-nums" title={record.description}>
-                  {specHash ? `spec:${shortHash(specHash)}` : record.description}
-                </span>
-              )}
-              {specHash ? (
-                <span className="mt-1 block text-caption text-graphite">
-                  Only this hash is on chain. The client hands the spec text to the provider off chain, over whatever channel they already use; paste it under Check the spec below to prove it is the text this hash was made from.
-                </span>
-              ) : null}
-            </Row>
-            <Row label="Agent">
-              {detail.agentId !== null ? (
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="tabular-nums">8004 agent #{detail.agentId.toString()}</span>
-                  <Link href={`/agents?did=${encodeURIComponent(formatDid(activeChain.id, deployment.identityRegistry, detail.agentId))}`} className="text-caption text-carbon underline decoration-fog underline-offset-4 hover:decoration-carbon">
-                    Resolve its DID
-                  </Link>
-                </span>
-              ) : (
-                <span className="text-ash">Not bound</span>
-              )}
-            </Row>
-            <Row label="Created">{formatTimestamp(record.createdAt)}</Row>
-            <Row label="Expires">
-              {formatTimestamp(record.expiredAt)}
-              {now < record.expiredAt ? <span className="text-caption text-graphite"> ({formatDuration(record.expiredAt - now)} left)</span> : null}
-            </Row>
-          </dl>
-        </PanelCard>
-        <PanelCard title="Timeline" description="Built from the record's timestamps and the keeper window.">
-          <Timeline detail={detail} now={now} />
-        </PanelCard>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <PanelCard title="Settlement clock" description="The job's phases laid out in time: how long each took, which one is running, and where now sits.">
+      {detail.status === "Submitted" ? (
+        <PanelCard
+          title={windowClosed(detail, now) ? "The window has closed" : "In the challenge window"}
+          description={
+            windowClosed(detail, now)
+              ? "The client did not reject in time. Anyone may finalize now, and the provider is credited."
+              : `${formatCountdown(detail.finalizeAfter, now)} — the client may still reject until ${formatTimestamp(detail.finalizeAfter)}`
+          }
+        >
           <SettlementClock clock={clock} />
         </PanelCard>
-        <PanelCard title="Payout split" description={split ? "How the escrowed budget divides at settlement, from the fee basis points snapshotted at funding." : "Fees are snapshotted when the job is funded."}>
-          {split ? (
-            <SegmentBar
-              ariaLabel="Payout split of the budget"
-              total={split.budget}
-              segments={[
-                { key: "provider", label: split.providerBps < 10_000 ? "Provider share" : "Net payout", value: split.providerShare, color: chartColors.lavender, display: `${formatCompactUsdc(split.providerShare)} USDC` },
-                ...(split.clientShare > 0 ? [{ key: "client", label: "Returned to client", value: split.clientShare, color: chartColors.sky, display: `${formatCompactUsdc(split.clientShare)} USDC` }] : []),
-                { key: "platform", label: `Platform fee ${formatBps(record.platformFeeBP)}`, value: split.platformFee, color: chartColors.carbon, display: `${formatCompactUsdc(split.platformFee)} USDC` },
-                { key: "evaluator", label: `Evaluator fee ${formatBps(record.evaluatorFeeBP)}`, value: split.evaluatorFee, color: chartColors.amber, display: `${formatCompactUsdc(split.evaluatorFee)} USDC` },
-              ]}
-            />
-          ) : (
-            <p className="text-caption text-ash">No budget has been escrowed for this job yet.</p>
-          )}
-          {split && split.providerBps < 10_000 ? (
-            <p className="mt-4 text-caption text-graphite">The dispute decision awarded {formatBps(split.providerBps)} of the net payout to the provider; the rest goes back to the client.</p>
-          ) : null}
-        </PanelCard>
-      </div>
-
-      {specHash ? <SpecCheck description={record.description} /> : null}
-
-      {hookIsSquare ? <CompliancePanel jobId={id} status={record.status} client={record.client} address={address} now={now} /> : null}
-
-      {hookIsSquare ? <PartiesPanel client={record.client} provider={record.provider} payee={detail.payee} submitted={record.submittedAt > 0} /> : null}
-
-      {hookIsSquare ? <SettlementRecord jobId={id} status={record.status} /> : null}
-
-      {listing.status !== 0 || detail.dispute.disputedAt !== 0 ? (
-        <div className={`grid gap-4 ${listing.status !== 0 && detail.dispute.disputedAt !== 0 ? "lg:grid-cols-2" : ""}`}>
-          {listing.status !== 0 ? (
-            <PanelCard title="Receivable listing" description="From ClaimMarket.getListing.">
-              <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
-                <Row label="Status">
-                  <StatusPill label={LISTING_LABELS[listing.status] ?? `Status ${listing.status}`} tone={listingTone[listing.status] ?? "neutral"} />
-                </Row>
-                <Row label="Seller">
-                  <AddressLink address={listing.seller} />
-                </Row>
-                <Row label="Buyer">
-                  <AddressLink address={listing.buyer} />
-                </Row>
-                <Row label="Price">
-                  <AmountUsdc value={listing.price} />
-                </Row>
-                <Row label="Face value">
-                  <AmountUsdc value={listing.faceValue} />
-                </Row>
-                <Row label="Discount">
-                  {listing.faceValue > 0n ? formatBps(Number(((listing.faceValue - listing.price) * 10_000n) / listing.faceValue)) : "n/a"}
-                </Row>
-              </dl>
-            </PanelCard>
-          ) : null}
-          {detail.dispute.disputedAt !== 0 ? (
-            <PanelCard title="Dispute" description="From Arbitration.disputeOf and the keeper's dispute reference.">
-              <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
-                <Row label="Outcome">
-                  <StatusPill label={OUTCOME_LABELS[detail.dispute.outcome] ?? `Outcome ${detail.dispute.outcome}`} tone={outcomeTone[detail.dispute.outcome] ?? "neutral"} />
-                </Row>
-                <Row label="Disputer">
-                  <AddressLink address={detail.dispute.disputer} />
-                </Row>
-                <Row label="Bond">
-                  <AmountUsdc value={detail.dispute.bond} />
-                </Row>
-                <Row label="Opened">{formatTimestamp(detail.dispute.disputedAt)}</Row>
-                <Row label="Resolve by">
-                  {formatTimestamp(detail.dispute.resolveBy)}
-                  {detail.dispute.outcome === 0 ? <span className="text-caption text-graphite"> ({formatCountdown(detail.dispute.resolveBy, now).toLowerCase()})</span> : null}
-                </Row>
-                <Row label="Votes">
-                  <span className="tabular-nums">
-                    {countVotes(detail.dispute.voted)} cast, {detail.threshold} required
-                  </span>
-                </Row>
-                <Row label={`Arbiter set v${detail.dispute.setVersion}`}>
-                  <span className="flex flex-col gap-1">
-                    {detail.arbiters.map((arbiter) => (
-                      <AddressLink key={arbiter} address={arbiter} />
-                    ))}
-                  </span>
-                </Row>
-                {detail.dispute.outcome === Outcome.Complete || detail.dispute.outcome === Outcome.Lapsed ? (
-                  <Row label="Provider share">{formatBps(detail.dispute.providerBps)}</Row>
-                ) : null}
-                <Row label="Applied on the kernel">{detail.keeperDispute.resolved ? "Yes" : "Not yet"}</Row>
-                <Row label="Bond settled">{detail.dispute.bondSettled ? "Yes" : "Not yet"}</Row>
-              </dl>
-            </PanelCard>
-          ) : null}
-        </div>
       ) : null}
 
-      <PanelCard
-        title="Actions"
-        description={
-          address
-            ? `Lifecycle actions available to ${address} right now. Each one sends a transaction through the SDK.`
-            : "Connect a wallet to see the lifecycle actions it can take. Permissionless steps are listed regardless."
-        }
-      >
-        {anyAction ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {showSetProvider ? <SetProviderAction ctx={ctx} /> : null}
-            {showSetBudget ? <SetBudgetAction ctx={ctx} detail={detail} /> : null}
-            {showFund ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Fund"
-                label="Fund"
-                buttonLabel={`Fund ${formatUsdc(record.budget)} USDC`}
-                description={
-                  <>
-                    Moves the budget into escrow and snapshots the fee basis points. If the USDC allowance is short, an approval is sent first.
-                    {hookIsSquare && policy.data?.module !== null && policy.data?.module !== undefined && !policy.data.committed ? (
-                      <span className="mt-2 block text-magenta">
-                        The hook holds a compliance module and this wallet has no policy on the registry: the release would be refused and pay you back, and the provider nothing. Commit a policy on the{" "}
-                        <a className="underline" href="/policy">
-                          Policy page
-                        </a>{" "}
-                        before funding.
-                      </span>
-                    ) : null}
-                  </>
-                }
-                send={(client) => client.fund(id, record.budget)}
-              />
-            ) : null}
-            {showSubmit ? <SubmitAction ctx={ctx} detail={detail} now={now} /> : null}
-            {showFinalize ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Finalize"
-                label="Finalize"
-                buttonLabel="Finalize"
-                description="The challenge window closed without a dispute. Anyone may finalize; the caller is paid the evaluator fee and the hook routes the payout."
-                send={(client) => client.finalize(id)}
-              />
-            ) : null}
-            {showDispute ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Dispute"
-                label="Dispute"
-                buttonLabel={`Dispute with a ${formatUsdc(detail.bond)} USDC bond`}
-                description={`Opens an arbitration case. The bond from Arbitration.bondFor is ${formatUsdc(detail.bond)} USDC; an approval is sent first if the allowance is short. The window closes in ${formatDuration(detail.challengeEnd - now)}.`}
-                send={(client) => client.dispute(id)}
-              />
-            ) : null}
-            {showVote ? <VoteAction ctx={ctx} detail={detail} /> : null}
-            {showFinalizeDecided ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Apply the decision"
-                label="Finalize decided"
-                buttonLabel="Finalize decided"
-                description={`The arbiters reached ${OUTCOME_LABELS[detail.dispute.outcome] ?? "a decision"} with ${formatBps(detail.dispute.providerBps)} to the provider. Anyone may apply it on the kernel and settle the bond.`}
-                send={(client) => client.finalizeDecided(id)}
-              />
-            ) : null}
-            {showLapse ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Lapse the dispute"
-                label="Lapse"
-                buttonLabel="Lapse"
-                description="The resolve-by time passed without a decision. Lapsing records the optimistic outcome so the job can be finalized."
-                send={(client) => client.lapse(id)}
-              />
-            ) : null}
-            {showList ? <ListClaimAction ctx={ctx} detail={detail} now={now} /> : null}
-            {showBuy && address !== undefined ? <BuyClaimAction ctx={ctx} detail={detail} now={now} account={address} /> : null}
-            {showCancel ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Cancel the listing"
-                label="Cancel claim"
-                buttonLabel="Cancel listing"
-                description="Withdraws the receivable from the market. A cancelled listing can be replaced later."
-                send={(client) => client.cancelClaim(id)}
-              />
-            ) : null}
-            {showReject ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Cancel the job"
-                label="Reject"
-                buttonLabel="Reject job"
-                description="Rejects the open job before anything is escrowed. No refund is needed and no reputation signal is written."
-                send={(client) => client.reject(id)}
-              />
-            ) : null}
-            {showEvaluate ? <EvaluateAction ctx={ctx} detail={detail} payoutRouted={payoutRouted} /> : null}
-            {showClaimRefund ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Claim refund"
-                label="Claim refund"
-                buttonLabel="Claim refund"
-                description={
-                  record.status === JobStatus.Submitted
-                    ? "The expiry passed and the evaluator has no settlement horizon, so the submission does not hold the escrow. Anyone may trigger the refund; the client is credited on the ledger."
-                    : "The expiry passed with the budget still in escrow and nothing submitted. Anyone may trigger the refund; the client is credited on the ledger."
-                }
-                send={(client) => client.claimRefund(id)}
-              />
-            ) : null}
-            {expiryHeldByKeeper ? (
-              <p className="text-caption text-graphite">
-                The expiry passed after the submission. The keeper evaluator settles this job instead of a refund: finalize once the window closes, or a dispute the arbiters decide or that lapses.
-              </p>
-            ) : null}
-            {withdrawable > 0n ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Withdraw"
-                label="Withdraw"
-                buttonLabel={`Withdraw ${formatUsdc(withdrawable)} USDC`}
-                description="Pulls every credit on the SquareJob ledger for the connected wallet, across all jobs."
-                send={(client) => client.withdraw()}
-              />
-            ) : null}
-            {bondWithdrawable > 0n ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Withdraw bond"
-                label="Withdraw bond"
-                buttonLabel={`Withdraw ${formatUsdc(bondWithdrawable)} USDC`}
-                description="Pulls the bond credits on the Arbitration ledger for the connected wallet."
-                send={(client) => client.withdrawBond()}
-              />
-            ) : null}
-            {showRecordExpiry ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Record the expiry"
-                label="Record expiry"
-                buttonLabel="Record expiry"
-                description="Writes the neutral reputation signal for the bound agent on the hook. Permissionless and idempotent."
-                send={(client) => client.recordExpiry(id)}
-              />
-            ) : null}
-            {showSettleBond ? (
-              <SimpleAction
-                ctx={ctx}
-                title="Settle the bond"
-                label="Settle bond"
-                buttonLabel="Settle bond"
-                description="The job expired under its dispute. This routes the bond the way the decision says, or back to the disputer when there was none, and credits the Arbitration ledger. The keeper sends it on its next tick; anyone may send it sooner."
-                send={(client) => client.settleBond(id)}
-              />
-            ) : null}
-          </div>
-        ) : (
-          <EmptyState
-            title={address ? "Nothing to do from this wallet right now" : "No permissionless step is open right now"}
-            hint={address ? "The job is waiting on another party or on the clock." : "Connect the client, provider or an arbiter wallet to see role-gated actions."}
-          />
-        )}
-      </PanelCard>
+      <div className="grid gap-8 lg:grid-cols-[1.2fr_1fr]">
+        <div className="flex flex-col gap-4">
+          <Actions detail={detail} ctx={ctx} token={token} now={now} balance={positions.data?.token} />
+          <Withdrawable ctx={ctx} token={token} />
+        </div>
+        <div className="flex flex-col gap-4">
+          <PartiesPanel client={detail.client} provider={detail.provider} />
+          <PayoutPanel detail={detail} token={token} />
+          <Facts detail={detail} token={token} />
+        </div>
+      </div>
     </div>
   );
 }

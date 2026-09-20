@@ -1,18 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import type { Address } from "viem";
-import { AmountUsdc } from "@/components/AmountUsdc";
+import { Amount } from "@/components/Amount";
 import { PanelCard } from "@/components/PanelCard";
 import { StatusPill, phaseTone } from "@/components/StatusPill";
-import { submitDeadline } from "@/lib/actions";
 import { formatCountdown, formatTimestamp } from "@/lib/format";
 import { walletInbox, walletJobCount } from "@/lib/inbox";
 import { jobPhase, PHASE_LABELS, type JobSummary } from "@/lib/square";
-import { deployment } from "@/lib/wagmi";
 
-export function ActionInbox({ jobs, address, now, scanned }: { jobs: JobSummary[]; address: Address; now: number; scanned: number }) {
-  const groups = walletInbox(jobs, address, deployment.keeperEvaluator, now);
+export function ActionInbox({ jobs, address, now, scanned }: { jobs: JobSummary[]; address: string; now: number; scanned: number }) {
+  const groups = walletInbox(jobs, address, now);
   const mine = walletJobCount(jobs, address);
   const pending = groups.reduce((sum, group) => sum + group.jobs.length, 0);
 
@@ -50,16 +47,14 @@ export function ActionInbox({ jobs, address, now, scanned }: { jobs: JobSummary[
                         #{job.id.toString()}
                       </Link>
                       <span className="text-caption tabular-nums text-graphite">
-                        {group.kind === "dispute" && job.challengeEnd > 0
-                          ? formatCountdown(job.challengeEnd, now)
-                          : group.kind === "submit"
-                            ? `Submit by ${formatTimestamp(submitDeadline(job))}`
-                            : group.kind === "fund" || group.kind === "budget" || group.kind === "evaluate"
-                              ? `Expires ${formatTimestamp(job.expiredAt)}`
-                              : ""}
+                        {group.kind === "reject" && job.finalizeAfter > 0
+                          ? formatCountdown(job.finalizeAfter, now)
+                          : group.kind === "submit" || group.kind === "fund" || group.kind === "budget"
+                            ? `Expires ${formatTimestamp(job.expiredAt)}`
+                            : ""}
                       </span>
                       <span className="flex items-center gap-3">
-                        <AmountUsdc value={job.budget} className="text-caption" />
+                        <Amount value={job.budget} className="text-caption" />
                         <StatusPill label={PHASE_LABELS[phase]} tone={phaseTone[phase]} />
                       </span>
                     </li>

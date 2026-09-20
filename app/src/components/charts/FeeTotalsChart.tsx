@@ -1,7 +1,8 @@
 "use client";
 
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartColors, chartFont, formatCompactUsdc, type FeeTotals } from "@/lib/charts";
+import { chartColors, chartFont, formatCompactAmount, type FeeTotals } from "@/lib/charts";
+import { usePaymentTokenLabel } from "@/lib/square";
 import { ChartFrame, ChartPlaceholder } from "./ChartFrame";
 
 const HEIGHT = 220;
@@ -13,34 +14,34 @@ interface Row {
   color: string;
 }
 
-function FeeTooltip({ active, payload }: { active?: boolean; payload?: { payload: Row }[] }) {
+function FeeTooltip({ active, payload, token }: { active?: boolean; payload?: { payload: Row }[]; token: string }) {
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
   return (
     <div className="rounded-xl border border-fog bg-paper-white px-4 py-3 shadow-subtle-2">
       <p className="text-caption font-medium text-carbon">{row.label}</p>
-      <p className="text-caption tabular-nums text-graphite">{formatCompactUsdc(row.value)} USDC</p>
+      <p className="text-caption tabular-nums text-graphite">{formatCompactAmount(row.value)} {token}</p>
     </div>
   );
 }
 
 export function FeeTotalsChart({ totals, scanned, loading, error }: { totals: FeeTotals | null; scanned: number; loading: boolean; error?: string | null }) {
+  const token = usePaymentTokenLabel();
   const rows: Row[] = totals
     ? [
-        { key: "net", label: "Paid to payees", value: totals.netPaid, color: chartColors.lavender },
+        { key: "net", label: "Paid to providers", value: totals.netPaid, color: chartColors.lavender },
         { key: "platform", label: "Platform fees", value: totals.platform, color: chartColors.carbon },
-        { key: "evaluator", label: "Evaluator fees", value: totals.evaluator, color: chartColors.amber },
         { key: "refunded", label: "Refunded to clients", value: totals.refunded, color: chartColors.magenta },
       ]
     : [];
-  const nothing = totals !== null && totals.completed === 0 && totals.rejected === 0;
+  const nothing = totals !== null && totals.completed === 0 && totals.rejected === 0 && totals.refundedJobs === 0;
   return (
     <ChartFrame
       title="Settled on recent jobs"
-      description="Where escrowed USDC went on the jobs that reached a terminal status."
+      description={`Where ${token ? `escrowed ${token}` : "the escrow"} went on the jobs that reached a terminal status.`}
       caption={
         totals
-          ? `${totals.completed} completed and ${totals.rejected} rejected among the ${scanned} most recent jobs. Fees are the snapshotted basis points applied to each budget, and what is paid to a payee is the provider share of the net that the settlement decided${totals.splitToClient > 0 ? `; split decisions sent ${formatCompactUsdc(totals.splitToClient)} USDC of that net back to clients, counted as refunded` : ""}. The kernel keeps per-account balances, not per-job settlement rows.`
+          ? `${totals.completed} completed, ${totals.rejected} rejected and ${totals.refundedJobs} expired among the ${scanned} most recent jobs. Finalizing credits the provider the budget less the platform fee at the job's own basis points; a rejection and a refund each credit the whole budget back to the client. The kernel keeps per-account balances, not per-job settlement rows.`
           : `Computed over the ${scanned} most recent job records.`
       }
     >
@@ -64,7 +65,7 @@ export function FeeTotalsChart({ totals, scanned, loading, error }: { totals: Fe
                 width={112}
                 tick={{ fill: chartColors.graphite, fontSize: 12, fontFamily: chartFont }}
               />
-              <Tooltip cursor={{ fill: chartColors.mist }} content={<FeeTooltip />} />
+              <Tooltip cursor={{ fill: chartColors.mist }} content={<FeeTooltip token={token} />} />
               <Bar dataKey="value" radius={[7, 7, 7, 7]} barSize={12} isAnimationActive={false}>
                 {rows.map((row) => (
                   <Cell key={row.key} fill={row.color} />
@@ -73,7 +74,7 @@ export function FeeTotalsChart({ totals, scanned, loading, error }: { totals: Fe
                   dataKey="value"
                   position="right"
                   offset={8}
-                  formatter={(value) => `${formatCompactUsdc(Number(value))} USDC`}
+                  formatter={(value) => `${formatCompactAmount(Number(value))} ${token}`}
                   style={{ fill: chartColors.carbon, fontSize: 12, fontFamily: chartFont }}
                 />
               </Bar>

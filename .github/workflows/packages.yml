@@ -183,9 +183,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "22"
-      - name: Build path dependencies
+      # core imports @squaresdk/did-resolver (src/agent.ts), so that is built first.
+      - name: Build the core the app reads the chain through, and what it imports
         run: |
-          for dep in packages/did-resolver packages/core packages/policy; do
+          for dep in packages/did-resolver packages/core; do
             (cd "$dep" && npm install --install-links && npm run build)
           done
       - name: Install, typecheck, test, build

@@ -1,19 +1,30 @@
 "use client";
 
-import { AddressLink } from "./AddressLink";
-import { StellarMark } from "./marks";
 import { formatBigint, formatDuration } from "@/lib/format";
 import { useNetwork } from "@/lib/square";
-import { describeError } from "@/lib/tx";
-import { activeChain, deployment, isTestnet } from "@/lib/wagmi";
+import { deployment, isTestnet, NETWORK_LABEL } from "@/lib/stellar";
+import { AddressLink } from "./AddressLink";
+import { StellarMark } from "./marks";
 
-const contracts = [
-  { label: "SquareJob", address: deployment.squareJob },
-  { label: "KeeperEvaluator", address: deployment.keeperEvaluator },
-  { label: "Arbitration", address: deployment.arbitration },
-  { label: "ClaimMarket", address: deployment.claimMarket },
-  { label: "SquareHook", address: deployment.squareHook },
-];
+/**
+ * What this build's record names. Only the kernel is certain on the MVP
+ * stack; the rest join as their contracts are deployed, so a missing one is
+ * left out rather than drawn empty.
+ */
+const contracts: { label: string; address: string }[] =
+  deployment === null
+    ? []
+    : (
+        [
+          ["square_job", deployment.squareJob],
+          ["keeper_evaluator", deployment.keeperEvaluator],
+          ["square_hook", deployment.squareHook],
+          ["arbitration", deployment.arbitration],
+          ["claim_market", deployment.claimMarket],
+          ["policy_registry", deployment.policyRegistry],
+          [`${deployment.token.code} (token)`, deployment.token.contractId],
+        ] as const
+      ).flatMap(([label, address]) => (address === undefined ? [] : [{ label, address }]));
 
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -31,22 +42,23 @@ function Skeleton() {
 export function NetworkStrip() {
   const network = useNetwork();
   const data = network.data;
+  const window = data === undefined ? null : Number(data.config.challengeWindow);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-fog bg-paper-white">
       <div className="grid divide-y divide-fog sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <Cell label="Chain">
+        <Cell label="Network">
           <span className="inline-flex items-center gap-2">
             {isTestnet ? <StellarMark className="size-4" /> : null}
-            {activeChain.name} <span className="text-graphite">({activeChain.id})</span>
+            {NETWORK_LABEL}
+            {data ? <span className="text-graphite">(protocol {data.protocolVersion})</span> : null}
           </span>
         </Cell>
-        <Cell label="Block">{data ? formatBigint(data.blockNumber) : network.isError ? "Unavailable" : <Skeleton />}</Cell>
-        <Cell label="Settlement horizon">
-          {data ? (
+        <Cell label="Ledger">{data ? formatBigint(BigInt(data.ledger)) : network.isError ? "Unavailable" : <Skeleton />}</Cell>
+        <Cell label="Challenge window">
+          {window !== null ? (
             <>
-              {formatDuration(data.settlementHorizon)}{" "}
-              <span className="text-graphite">({data.settlementHorizon} s from KeeperEvaluator)</span>
+              {formatDuration(window)} <span className="text-graphite">({window} s on square_job)</span>
             </>
           ) : network.isError ? (
             "Unavailable"
@@ -55,16 +67,20 @@ export function NetworkStrip() {
           )}
         </Cell>
       </div>
-      <div className="grid divide-y divide-fog border-t border-fog sm:grid-cols-5 sm:divide-x sm:divide-y-0">
-        {contracts.map((contract) => (
-          <Cell key={contract.label} label={contract.label}>
-            <AddressLink address={contract.address} />
-          </Cell>
-        ))}
-      </div>
-      {network.isError ? (
-        <p className="border-t border-fog px-5 py-3 text-caption text-graphite">RPC read failed: {describeError(network.error)}</p>
-      ) : null}
+      {contracts.length > 0 ? (
+        <div className="grid gap-x-6 gap-y-2 border-t border-fog px-5 py-4 sm:grid-cols-2 lg:grid-cols-3">
+          {contracts.map((contract) => (
+            <p key={contract.label} className="flex items-center justify-between gap-3 text-caption">
+              <span className="text-graphite">{contract.label}</span>
+              <AddressLink address={contract.address} />
+            </p>
+          ))}
+        </div>
+      ) : (
+        <p className="border-t border-fog px-5 py-4 text-caption text-graphite">
+          This build names no deployment for {NETWORK_LABEL}: set NEXT_PUBLIC_DEPLOYMENT to the record the deploy script writes.
+        </p>
+      )}
     </div>
   );
 }

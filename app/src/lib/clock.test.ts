@@ -1,43 +1,48 @@
-import { JobStatus } from "@squaresdk/core";
 import { describe, expect, it } from "vitest";
-import { disputeAvailable } from "./actions";
-import { chainClockOffset, chainNow, clockSkew, CLOCK_SKEW_NOTICE_SECONDS } from "./clock";
 
-const keeper = "0x00000000000000000000000000000000000000Cc" as const;
-const otherEvaluator = "0x00000000000000000000000000000000000000Dd" as const;
+import { rejectAvailable } from "./actions";
+import { chainClockOffset, chainNow, clockSkew, CLOCK_SKEW_NOTICE_SECONDS } from "./clock";
+import { CLIENT, submitted } from "./testJob";
+
+/**
+ * Why the countdowns run on ledger time. The deployed kernel's challenge
+ * window is short, so a browser a couple of minutes fast would judge it
+ * closed the instant the provider submitted and would never draw the reject
+ * button at all — on a chain that was still accepting the rejection.
+ */
 
 const SUBMITTED_AT = 1_800_000_000;
-const CHALLENGE_WINDOW = 120;
-const CHALLENGE_END = SUBMITTED_AT + CHALLENGE_WINDOW;
+const WINDOW = 120;
+const CLOSES_AT = SUBMITTED_AT + WINDOW;
 const BROWSER_AHEAD_BY = 120;
 
-const submitted = { evaluator: keeper, status: JobStatus.Submitted, challengeEnd: CHALLENGE_END };
+const job = submitted(SUBMITTED_AT, { challengeWindow: WINDOW, expiredAt: SUBMITTED_AT + 100_000 });
 
 function browserClockMs(chainSecond: number): number {
   return (chainSecond + BROWSER_AHEAD_BY) * 1_000;
 }
 
-describe("a browser clock two minutes ahead of the chain", () => {
+describe("a browser clock two minutes ahead of the ledger", () => {
   const offset = chainClockOffset(SUBMITTED_AT, browserClockMs(SUBMITTED_AT));
 
-  it("reads the skew off the block timestamp and names it as the whole challenge window", () => {
+  it("reads the skew off the ledger's close time and names it as the whole window", () => {
     expect(offset).toBe(-BROWSER_AHEAD_BY);
     expect(clockSkew(offset)).toEqual({ seconds: BROWSER_AHEAD_BY, ahead: true });
   });
 
-  it("keeps the dispute available for every second the chain still accepts it", () => {
-    for (let second = 0; second < CHALLENGE_WINDOW; second += 1) {
+  it("keeps reject available for every second the chain still accepts it", () => {
+    for (let second = 0; second < WINDOW; second += 1) {
       const now = chainNow(offset, browserClockMs(SUBMITTED_AT + second));
       expect(now).toBe(SUBMITTED_AT + second);
-      expect(disputeAvailable(submitted, keeper, now)).toBe(true);
+      expect(rejectAvailable(job, CLIENT, now)).toBe(true);
     }
-    expect(disputeAvailable(submitted, keeper, chainNow(offset, browserClockMs(CHALLENGE_END)))).toBe(false);
+    expect(rejectAvailable(job, CLIENT, chainNow(offset, browserClockMs(CLOSES_AT)))).toBe(false);
   });
 
-  it("hides the dispute for the whole window when the same gate reads the browser clock instead", () => {
-    for (let second = 0; second < CHALLENGE_WINDOW; second += 1) {
+  it("hides it for the whole window when the same gate reads the browser clock instead", () => {
+    for (let second = 0; second < WINDOW; second += 1) {
       const browserNow = Math.floor(browserClockMs(SUBMITTED_AT + second) / 1_000);
-      expect(disputeAvailable(submitted, keeper, browserNow)).toBe(false);
+      expect(rejectAvailable(job, CLIENT, browserNow)).toBe(false);
     }
   });
 });
@@ -53,16 +58,7 @@ describe("clockSkew", () => {
 });
 
 describe("chainNow", () => {
-  it("falls back to the browser clock when no block has been read yet", () => {
+  it("falls back to the browser clock when no ledger has been read yet", () => {
     expect(chainNow(0, 1_800_000_500_000)).toBe(1_800_000_500);
-  });
-});
-
-describe("disputeAvailable", () => {
-  it("follows KeeperEvaluator.dispute: submitted, evaluated by the keeper, and before the window ends", () => {
-    expect(disputeAvailable(submitted, keeper, CHALLENGE_END - 1)).toBe(true);
-    expect(disputeAvailable(submitted, keeper, CHALLENGE_END)).toBe(false);
-    expect(disputeAvailable({ ...submitted, status: JobStatus.Funded }, keeper, SUBMITTED_AT)).toBe(false);
-    expect(disputeAvailable({ ...submitted, evaluator: otherEvaluator }, keeper, SUBMITTED_AT)).toBe(false);
   });
 });

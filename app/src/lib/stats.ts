@@ -1,4 +1,4 @@
-import { JobStatus } from "@squaresdk/core";
+import { payout } from "./job";
 import type { JobsSnapshot, JobSummary } from "./square";
 
 export interface LiveStats {
@@ -11,17 +11,13 @@ export interface LiveStats {
   scanned: number;
 }
 
-const BPS = 10_000n;
-
 function latest(job: JobSummary): number {
   return Math.max(job.createdAt, job.fundedAt, job.submittedAt);
 }
 
+/** What `finalize` credited the provider: the budget less the platform fee. */
 export function released(job: JobSummary): bigint {
-  const platformFee = (job.budget * BigInt(job.platformFeeBP)) / BPS;
-  const evaluatorFee = (job.budget * BigInt(job.evaluatorFeeBP)) / BPS;
-  const net = job.budget - platformFee - evaluatorFee;
-  return (net * BigInt(job.providerBps)) / BPS;
+  return payout(job);
 }
 
 export function liveStats(snapshot: JobsSnapshot): LiveStats {
@@ -31,12 +27,12 @@ export function liveStats(snapshot: JobsSnapshot): LiveStats {
   let active = 0;
   let lastActivity: number | null = null;
   for (const job of snapshot.jobs) {
-    const inEscrow = job.status === JobStatus.Funded || job.status === JobStatus.Submitted;
+    const inEscrow = job.status === "Funded" || job.status === "Submitted";
     if (inEscrow) {
       escrowed += job.budget;
       active += 1;
     }
-    if (job.status === JobStatus.Completed) {
+    if (job.status === "Completed") {
       settled += released(job);
       completed += 1;
     }

@@ -1,9 +1,7 @@
-import { JobStatus } from "@squaresdk/core";
-import { isAddressEqual, zeroAddress, type Address } from "viem";
-import { keeperEvaluates, refundAvailable, submitAvailable } from "./actions";
-import type { JobSummary } from "./square";
+import { budgetAvailable, fundAvailable, refundAvailable, rejectAvailable, submitAvailable, windowClosed } from "./actions";
+import type { JobSummary } from "./job";
 
-export type InboxKind = "submit" | "evaluate" | "fund" | "budget" | "dispute" | "finalize" | "refund";
+export type InboxKind = "submit" | "fund" | "budget" | "reject" | "finalize" | "refund";
 
 export interface InboxGroup {
   kind: InboxKind;
@@ -13,58 +11,50 @@ export interface InboxGroup {
 }
 
 const COPY: Record<InboxKind, { title: string; body: string }> = {
-  submit: { title: "Waiting for your deliverable", body: "You are the provider and the escrow is funded. Submit the hash before the deadline shown on each job, which is its expiry less the settlement horizon snapshotted on it." },
-  evaluate: { title: "Waiting for your evaluation", body: "You are the evaluator on the record and the provider has submitted. Complete to pay the provider, or reject to refund the client." },
-  fund: { title: "Waiting for your funding", body: "The budget is agreed. Approve USDC and fund to fix the fees and start the clock." },
-  budget: { title: "Needs a budget", body: "You opened these jobs without a budget. Agree one before funding." },
-  dispute: { title: "Your challenge window is open", body: "The provider submitted. You may still dispute with a bond until the window closes." },
-  finalize: { title: "Ready to finalize", body: "The challenge window closed without a dispute. Anyone may finalize; the payee is credited." },
-  refund: { title: "Expired, refund available", body: "Nothing was settled before the expiry and no optimistic evaluator holds the job. Claim the escrow back." },
+  submit: {
+    title: "Waiting for your deliverable",
+    body: "You are the provider and the escrow is funded. Submit the hash of your work before the job expires; the challenge window starts when you do.",
+  },
+  fund: {
+    title: "Waiting for your funding",
+    body: "The budget is agreed. Fund it to start the job; the transfer is authorized in the same signature, so there is no approval step.",
+  },
+  budget: { title: "Needs a budget", body: "These jobs have no budget yet. Either party may set one, and funding is what accepts it." },
+  reject: {
+    title: "Your challenge window is open",
+    body: "The provider submitted. Until the window closes you may reject and take the whole budget back; after it, anyone may finalize.",
+  },
+  finalize: {
+    title: "Ready to finalize",
+    body: "The challenge window closed and nobody rejected. Anyone may finalize; the provider is credited the budget less the platform fee.",
+  },
+  refund: { title: "Expired, refund available", body: "The job expired without a submission. Anyone may claim the refund; the budget goes back to the client." },
 };
 
-const ORDER: InboxKind[] = ["submit", "evaluate", "fund", "budget", "dispute", "finalize", "refund"];
+const ORDER: InboxKind[] = ["submit", "fund", "budget", "reject", "finalize", "refund"];
 
-function same(a: Address, b: Address): boolean {
-  return isAddressEqual(a, b);
+/**
+ * What this wallet is being waited on for, on one job. The kernel settles by
+ * window and has no evaluator, so every kind here is a call the connected
+ * wallet can actually make.
+ */
+export function classify(job: JobSummary, address: string, now: number): InboxKind | null {
+  if (submitAvailable(job, address, now)) return "submit";
+  if (refundAvailable(job, now) && job.client === address) return "refund";
+  if (fundAvailable(job, address, now)) return "fund";
+  if (budgetAvailable(job, address) && job.budget === 0n) return "budget";
+  if (job.status === "Submitted") {
+    if (windowClosed(job, now)) return job.client === address || job.provider === address ? "finalize" : null;
+    return rejectAvailable(job, address, now) ? "reject" : null;
+  }
+  return null;
 }
 
-export function classify(job: JobSummary, address: Address, keeperEvaluator: Address, now: number): InboxKind | null {
-  const client = same(job.client, address);
-  const provider = same(job.provider, address);
-  // A human evaluator: the record names this wallet and it is not the keeper,
-  // so nothing settles the submission but its own decision.
-  if (!client && !provider) {
-    return job.status === JobStatus.Submitted && same(job.evaluator, address) && !keeperEvaluates(job, keeperEvaluator) ? "evaluate" : null;
-  }
-  if (client && refundAvailable(job, keeperEvaluator, now)) return "refund";
-  const live = now < job.expiredAt;
-  switch (job.status) {
-    case JobStatus.Open:
-      if (!client || !live) return null;
-      if (job.budget === 0n) return "budget";
-      return same(job.provider, zeroAddress) ? null : "fund";
-    case JobStatus.Funded:
-      return provider && submitAvailable(job, now) ? "submit" : null;
-    case JobStatus.Submitted:
-      if (job.disputed) return null;
-      if (!keeperEvaluates(job, keeperEvaluator)) return null;
-      if (job.challengeEnd > 0 && now >= job.challengeEnd) return "finalize";
-      return client && live && job.challengeEnd > 0 ? "dispute" : null;
-    default:
-      return null;
-  }
-}
-
-export function walletInbox(
-  jobs: readonly JobSummary[],
-  address: Address | undefined,
-  keeperEvaluator: Address,
-  now: number,
-): InboxGroup[] {
+export function walletInbox(jobs: readonly JobSummary[], address: string | undefined, now: number): InboxGroup[] {
   if (!address) return [];
   const buckets = new Map<InboxKind, JobSummary[]>();
   for (const job of jobs) {
-    const kind = classify(job, address, keeperEvaluator, now);
+    const kind = classify(job, address, now);
     if (!kind) continue;
     const list = buckets.get(kind) ?? [];
     list.push(job);
@@ -73,7 +63,7 @@ export function walletInbox(
   return ORDER.filter((kind) => buckets.has(kind)).map((kind) => ({ kind, ...COPY[kind], jobs: buckets.get(kind) ?? [] }));
 }
 
-export function walletJobCount(jobs: readonly JobSummary[], address: Address | undefined): number {
+export function walletJobCount(jobs: readonly JobSummary[], address: string | undefined): number {
   if (!address) return 0;
-  return jobs.filter((job) => same(job.client, address) || same(job.provider, address) || same(job.evaluator, address)).length;
+  return jobs.filter((job) => job.client === address || job.provider === address).length;
 }

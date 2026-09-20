@@ -1,13 +1,15 @@
 "use client";
 
 import { MetricCard } from "@/components/MetricCard";
-import { UsdcMark } from "@/components/marks";
-import { formatBigint, formatUsdc } from "@/lib/format";
+import { StellarMark, UsdcMark } from "@/components/marks";
+import { formatAmount, formatBigint } from "@/lib/format";
+import { usePaymentTokenLabel } from "@/lib/square";
 import { useJobs, useNow } from "@/lib/square";
 import { liveStats, relativeTime } from "@/lib/stats";
 import { describeError } from "@/lib/tx";
 
 export function LiveStats() {
+  const token = usePaymentTokenLabel();
   const jobs = useJobs();
   const now = useNow(30_000);
   const stats = jobs.data ? liveStats(jobs.data) : null;
@@ -20,19 +22,19 @@ export function LiveStats() {
         <MetricCard
           label={
             <>
-              <UsdcMark className="size-3.5" />
-              USDC in escrow
+              {token === "USDC" ? <UsdcMark className="size-3.5" /> : <StellarMark className="size-3.5" />}
+              {token ? `${token} in escrow` : "In escrow"}
             </>
           }
           loading={jobs.isPending}
-          value={stats ? formatUsdc(stats.escrowed) : unavailable ?? "0"}
+          value={stats ? formatAmount(stats.escrowed) : unavailable ?? "0"}
           hint={stats ? `Still held on funded and submitted jobs, of the ${stats.scanned} most recent` : undefined}
         />
         <MetricCard
           label="Settled"
           loading={jobs.isPending}
           value={stats ? `${stats.completed} ${stats.completed === 1 ? "job" : "jobs"}` : unavailable ?? "0"}
-          hint={stats ? `${formatUsdc(stats.settled)} USDC released to payees, net of the fees snapshotted at funding` : undefined}
+          hint={stats ? `${formatAmount(stats.settled)} ${token} released to payees, net of the fees snapshotted at funding` : undefined}
         />
         <MetricCard
           label="Last activity"

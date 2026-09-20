@@ -1,13 +1,12 @@
 "use client";
 
-import { JobStatus } from "@squaresdk/core";
 import Link from "next/link";
 import { useState } from "react";
-import { useAccount } from "wagmi";
 import { ActionInbox } from "@/components/ActionInbox";
 import { AddressLink } from "@/components/AddressLink";
-import { AmountUsdc } from "@/components/AmountUsdc";
+import { Amount } from "@/components/Amount";
 import { EscrowFlowChart } from "@/components/charts/EscrowFlowChart";
+import { FeeTotalsChart } from "@/components/charts/FeeTotalsChart";
 import { PipelineChart } from "@/components/charts/PipelineChart";
 import { DataTable, type Column } from "@/components/DataTable";
 import { EmptyState } from "@/components/EmptyState";
@@ -18,15 +17,14 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
 import { StatusPill, phaseTone } from "@/components/StatusPill";
 import { TabBar } from "@/components/TabBar";
-import { keeperEvaluates } from "@/lib/actions";
-import { escrowFlow, phaseBreakdown } from "@/lib/charts";
-import { formatBigint, formatCountdown, formatTimestamp } from "@/lib/format";
-import { indexerUrl, useIndexerOverview } from "@/lib/indexer";
+import { escrowFlow, feeTotals, phaseBreakdown } from "@/lib/charts";
+import { formatAmount, formatBigint, formatCountdown, formatTimestamp } from "@/lib/format";
 import { inputClass } from "@/components/Field";
-import { jobPhase, PHASE_LABELS, RECENT_JOB_WINDOW, useJobs, useNow, usePositions, useSquare, type JobPhase, type JobSummary } from "@/lib/square";
+import { jobPhase, PHASE_LABELS, RECENT_JOB_WINDOW, useJobs, useNow, usePaymentTokenLabel, usePositions, useSquare, type JobPhase, type JobSummary } from "@/lib/square";
 import { matchesQuery } from "@/lib/stats";
 import { describeError, useTx } from "@/lib/tx";
-import { activeChain, deployment } from "@/lib/wagmi";
+import { NETWORK_LABEL } from "@/lib/stellar";
+import { useWallet } from "@/lib/wallet";
 
 const tabs = [
   { id: "all", label: "All" },
@@ -34,39 +32,36 @@ const tabs = [
   { id: "in-window", label: "In window" },
   { id: "finalizable", label: "Finalizable" },
   { id: "completed", label: "Completed" },
-  { id: "disputed", label: "Disputed" },
+  { id: "refundable", label: "Refundable" },
 ];
 
 function matchesTab(job: JobSummary, phase: JobPhase, tab: string): boolean {
   switch (tab) {
     case "open":
-      return job.status === JobStatus.Open || job.status === JobStatus.Funded;
+      return job.status === "Open" || job.status === "Funded";
     case "in-window":
       return phase === "in-window";
     case "finalizable":
       return phase === "finalizable";
     case "completed":
-      return job.status === JobStatus.Completed;
-    case "disputed":
-      return job.disputed;
+      return job.status === "Completed";
+    case "refundable":
+      return phase === "refundable";
     default:
       return true;
   }
 }
 
 function ChallengeCell({ job, now }: { job: JobSummary; now: number }) {
-  if (job.status === JobStatus.Submitted) {
-    if (job.disputed) return <span className="text-graphite">Paused by dispute</span>;
-    if (!keeperEvaluates(job, deployment.keeperEvaluator)) return <span className="text-ash">Another evaluator</span>;
-    if (job.challengeEnd === 0) return <span className="text-ash">Unknown</span>;
+  if (job.status === "Submitted") {
     return (
       <span className="flex flex-col">
-        <span className="tabular-nums text-carbon">{formatCountdown(job.challengeEnd, now)}</span>
-        <span className="text-caption tabular-nums text-ash">{formatTimestamp(job.challengeEnd)}</span>
+        <span className="tabular-nums text-carbon">{formatCountdown(job.finalizeAfter, now)}</span>
+        <span className="text-caption tabular-nums text-ash">{formatTimestamp(job.finalizeAfter)}</span>
       </span>
     );
   }
-  if (job.status === JobStatus.Open || job.status === JobStatus.Funded) {
+  if (job.status === "Open" || job.status === "Funded") {
     return <span className="text-ash">Not submitted</span>;
   }
   return <span className="text-ash">Settled</span>;
@@ -78,21 +73,21 @@ export function DashboardView() {
   const [limit, setLimit] = useState(RECENT_JOB_WINDOW);
   const now = useNow();
   const jobsQuery = useJobs(limit);
-  const indexer = useIndexerOverview();
-  const { address, chainId } = useAccount();
-  const positions = usePositions(address);
+  const { address } = useWallet();
+  const positions = usePositions(address ?? undefined);
   const square = useSquare();
+  const token = usePaymentTokenLabel();
   const { run, busy } = useTx();
 
   const jobs = jobsQuery.data?.jobs ?? [];
   const scanned = jobsQuery.data?.scanned ?? 0;
   const withPhase = jobs.map((job) => ({ job, phase: jobPhase(job, now) }));
   const counts = {
-    open: withPhase.filter(({ job }) => job.status === JobStatus.Open || job.status === JobStatus.Funded).length,
+    open: withPhase.filter(({ job }) => job.status === "Open" || job.status === "Funded").length,
     inWindow: withPhase.filter(({ phase }) => phase === "in-window").length,
     finalizable: withPhase.filter(({ phase }) => phase === "finalizable").length,
-    completed: withPhase.filter(({ job }) => job.status === JobStatus.Completed).length,
-    disputed: withPhase.filter(({ job }) => job.disputed).length,
+    completed: withPhase.filter(({ job }) => job.status === "Completed").length,
+    refundable: withPhase.filter(({ phase }) => phase === "refundable").length,
   };
   const tabCounts: Record<string, number> = {
     all: jobs.length,
@@ -100,23 +95,19 @@ export function DashboardView() {
     "in-window": counts.inWindow,
     finalizable: counts.finalizable,
     completed: counts.completed,
-    disputed: counts.disputed,
+    refundable: counts.refundable,
   };
   const filtered = withPhase.filter(({ job, phase }) => matchesTab(job, phase, tab) && matchesQuery(job, query));
   const olderAvailable = jobsQuery.data ? jobsQuery.data.counter > BigInt(jobsQuery.data.scanned) : false;
   const flow = jobsQuery.data ? escrowFlow(jobs) : null;
   const slices = jobsQuery.data ? phaseBreakdown(jobs, now, PHASE_LABELS) : [];
+  const settled = jobsQuery.data ? feeTotals(jobs) : null;
 
-  const indexerData = indexer.data;
-  const caption = indexerUrl
-    ? indexerData
-      ? `Open and in window come from the indexer at ${indexerUrl} (last indexed block ${indexerData.lastIndexedBlock ?? "unknown"}). Completed is counted over the ${scanned} most recent job ids read from the chain.`
-      : indexer.isError
-        ? `The indexer at ${indexerUrl} did not answer (${describeError(indexer.error)}). Counts fall back to the ${scanned} most recent job ids read from the chain.`
-        : `Waiting for the indexer at ${indexerUrl}. Counts below are read over the ${scanned} most recent job ids from the chain.`
-    : `No indexer is configured. Open, in window and completed are counted over the ${scanned} most recent job ids (at most 50) read directly from the chain; the total comes from jobCounter.`;
+  // The MVP reads the chain itself: the kernel's JobCreated events for the ids
+  // and the contract for each job. The indexer arrives with #36.
+  const caption = `Open, in window and completed are counted over the ${scanned} most recent jobs, read from the kernel's own events and records; the total comes from job_counter.`;
 
-  const onActiveChain = address !== undefined && chainId === activeChain.id;
+  const connected = address !== null;
 
   const columns: Column<{ job: JobSummary; phase: JobPhase }>[] = [
     {
@@ -133,7 +124,7 @@ export function DashboardView() {
     },
     { key: "client", header: "Client", render: ({ job }) => <AddressLink address={job.client} /> },
     { key: "provider", header: "Provider", render: ({ job }) => <AddressLink address={job.provider} /> },
-    { key: "budget", header: "Budget", align: "right", render: ({ job }) => <AmountUsdc value={job.budget} /> },
+    { key: "budget", header: "Budget", align: "right", render: ({ job }) => <Amount value={job.budget} /> },
     { key: "status", header: "Status", render: ({ phase }) => <StatusPill label={PHASE_LABELS[phase]} tone={phaseTone[phase]} /> },
     { key: "window", header: "Challenge end", render: ({ job }) => <ChallengeCell job={job} now={now} /> },
     {
@@ -153,7 +144,7 @@ export function DashboardView() {
       <section className="flex flex-col gap-8">
         <SectionHeading
           title="Dashboard"
-          description={`Jobs on ${activeChain.name}, read from the chain every ten seconds.`}
+          description={`Jobs on ${NETWORK_LABEL}, read from the chain every ten seconds.`}
           actions={<PrimaryButton href="/new">New job</PrimaryButton>}
         />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -161,18 +152,18 @@ export function DashboardView() {
             label="Total jobs"
             loading={jobsQuery.isPending}
             value={jobsQuery.data ? formatBigint(jobsQuery.data.counter) : "Unavailable"}
-            hint="jobCounter on SquareJob"
+            hint="job_counter on square_job"
           />
           <MetricCard
             label="Open"
-            loading={jobsQuery.isPending && !indexerData}
-            value={indexerData ? indexerData.counts.open : jobsQuery.data ? counts.open : "Unavailable"}
+            loading={jobsQuery.isPending}
+            value={jobsQuery.data ? counts.open : "Unavailable"}
             hint="Open or funded, not yet submitted"
           />
           <MetricCard
             label="In window"
-            loading={jobsQuery.isPending && !indexerData}
-            value={indexerData ? indexerData.counts.inWindow : jobsQuery.data ? counts.inWindow : "Unavailable"}
+            loading={jobsQuery.isPending}
+            value={jobsQuery.data ? counts.inWindow : "Unavailable"}
             hint="Submitted, undisputed, window still open"
           />
           <MetricCard
@@ -185,62 +176,60 @@ export function DashboardView() {
         <p className="text-caption text-graphite">{caption}</p>
       </section>
 
-      {address ? <ActionInbox jobs={jobs} address={address} now={now} scanned={scanned} /> : null}
+      {address === null ? null : <ActionInbox jobs={jobs} address={address} now={now} scanned={scanned} />}
 
       <section aria-label="Activity" className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <EscrowFlowChart series={flow} scanned={scanned} loading={jobsQuery.isPending} error={jobsQuery.isError ? describeError(jobsQuery.error) : null} />
         <PipelineChart slices={slices} scanned={scanned} loading={jobsQuery.isPending} error={jobsQuery.isError ? describeError(jobsQuery.error) : null} />
       </section>
 
-      {address ? (
-        <PanelCard elevated title="Your positions" description="Pull-payment balances credited to the connected wallet.">
-          <div className="grid gap-4 md:grid-cols-3">
+      <section aria-label="Settlement">
+        <FeeTotalsChart totals={settled} scanned={scanned} loading={jobsQuery.isPending} error={jobsQuery.isError ? describeError(jobsQuery.error) : null} />
+      </section>
+
+      {address === null ? null : (
+        <PanelCard elevated title="Your positions" description="What this wallet holds, and what the kernel owes it.">
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-2xl border border-fog p-6">
-              <p className="text-caption text-graphite">USDC balance</p>
-              <p className="mt-2 text-subheading font-medium">
-                {positions.data ? <AmountUsdc value={positions.data.usdcBalance} /> : positions.isError ? "Unavailable" : "Loading"}
+              <p className="text-caption text-graphite">Wallet balance</p>
+              <p className="mt-2 text-subheading font-medium tabular-nums">
+                {positions.data ? <Amount value={positions.data.token} /> : positions.isError ? "Unavailable" : "Loading"}
+              </p>
+              <p className="mt-2 text-caption text-ash">
+                {token === "XLM"
+                  ? "XLM funds the budgets on this stack and pays every transaction fee."
+                  : positions.data
+                    ? `What the budgets are funded in. ${formatAmount(positions.data.xlm)} XLM pays the transaction fees.`
+                    : "What the budgets are funded in; the fees are paid in XLM."}
               </p>
             </div>
             <div className="flex flex-col gap-4 rounded-2xl border border-fog p-6">
               <div>
-                <p className="text-caption text-graphite">Withdrawable from SquareJob</p>
+                <p className="text-caption text-graphite">Withdrawable from square_job</p>
                 <p className="mt-2 text-subheading font-medium">
-                  {positions.data ? <AmountUsdc value={positions.data.withdrawable} /> : positions.isError ? "Unavailable" : "Loading"}
+                  {positions.data ? <Amount value={positions.data.withdrawable} /> : positions.isError ? "Unavailable" : "Loading"}
                 </p>
               </div>
               <div>
                 <PrimaryButton
                   size="sm"
-                  disabled={busy || !onActiveChain || !positions.data || positions.data.withdrawable === 0n}
-                  onClick={() => void run("Withdraw", () => square.withdraw())}
+                  disabled={busy || !connected || square === null || !positions.data || positions.data.withdrawable === 0n}
+                  onClick={() => {
+                    const client = square;
+                    const holder = address;
+                    const amount = positions.data?.withdrawable;
+                    if (client === null || holder === null || amount === undefined || amount === 0n) return;
+                    void run("Withdraw", () => client.withdrawTo(holder, amount));
+                  }}
                 >
                   Withdraw
                 </PrimaryButton>
-              </div>
-            </div>
-            <div className="flex flex-col gap-4 rounded-2xl border border-fog p-6">
-              <div>
-                <p className="text-caption text-graphite">Withdrawable from Arbitration</p>
-                <p className="mt-2 text-subheading font-medium">
-                  {positions.data ? <AmountUsdc value={positions.data.bondWithdrawable} /> : positions.isError ? "Unavailable" : "Loading"}
-                </p>
-              </div>
-              <div>
-                <PrimaryButton
-                  size="sm"
-                  disabled={busy || !onActiveChain || !positions.data || positions.data.bondWithdrawable === 0n}
-                  onClick={() => void run("Withdraw bond", () => square.withdrawBond())}
-                >
-                  Withdraw bond
-                </PrimaryButton>
+                <p className="mt-2 text-caption text-ash">The ledger credits; the holder chooses where it goes.</p>
               </div>
             </div>
           </div>
-          {!onActiveChain ? (
-            <p className="mt-4 text-caption text-ash">Switch the wallet to {activeChain.name} to withdraw.</p>
-          ) : null}
         </PanelCard>
-      ) : null}
+      )}
 
       <section className="flex flex-col gap-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -273,7 +262,7 @@ export function DashboardView() {
             ) : jobs.length === 0 ? (
               <EmptyState
                 title="No jobs yet"
-                hint="jobCounter is zero on this deployment."
+                hint="job_counter is zero on this deployment."
                 action={<PrimaryButton href="/new">Create the first job</PrimaryButton>}
               />
             ) : (

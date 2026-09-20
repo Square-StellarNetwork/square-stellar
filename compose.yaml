@@ -239,10 +239,13 @@ services:
     build:
       context: .
       dockerfile: app/Dockerfile
+      # The app is the Stellar one: it reads the kernel named by @squaresdk/core's
+      # record for NEXT_PUBLIC_NETWORK (testnet unless .env says otherwise), not
+      # the EVM chain this stack runs. Empty endpoints mean the network's own.
       args:
-        NEXT_PUBLIC_CHAIN_ID: ${CHAIN_ID:-31337}
-        NEXT_PUBLIC_RPC_URL: ${NEXT_PUBLIC_RPC_URL:-http://localhost:8545}
-        NEXT_PUBLIC_INDEXER_URL: ${NEXT_PUBLIC_INDEXER_URL:-http://localhost:3010}
+        NEXT_PUBLIC_NETWORK: ${NEXT_PUBLIC_NETWORK:-testnet}
+        NEXT_PUBLIC_RPC_URL: ${NEXT_PUBLIC_RPC_URL:-}
+        NEXT_PUBLIC_HORIZON_URL: ${NEXT_PUBLIC_HORIZON_URL:-}
     depends_on:
       indexer:
         condition: service_healthy
