@@ -1,0 +1,91 @@
+name: demo (GitHub Pages)
+
+# The public demo a judge clicks (#61).
+#
+# GitHub Pages is the host because it needs no account that does not already
+# exist: the repository is public and on GitHub, so nothing here is tied to an
+# old team's Vercel or Railway, which is what #56 removed and what CLAUDE.md
+# forbids reintroducing.
+#
+# What is published is the application, built as a static export against
+# Stellar Testnet. The contract ids are not set here — they come from
+# @squaresdk/core's compiled deployment record (#45), which is the one place
+# they are declared. The only thing this file decides is the sub-path, because
+# a project site is served from /<repository> rather than from a domain root.
+#
+# It runs on main and by hand. It does not run on a pull request: a fork's
+# branch must never be able to publish to the project's own URL.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "packages/core/**"
+      - "packages/did-resolver/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# The deploy job needs these; nothing else in the repository does.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and a newer push wins. `cancel-in-progress: false`
+# so a half-finished deploy is never left as the live site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+
+      # core's entry point still reaches did-resolver for the EVM side, so that
+      # is built first; nothing the app imports touches it.
+      - name: Build the core the app reads the chain through
+        run: |
+          for dep in packages/did-resolver packages/core; do
+            (cd "$dep" && npm install --install-links && npm run build)
+          done
+
+      - name: Build the app for Stellar Testnet
+        working-directory: app
+        env:
+          # A project site lives at https://<owner>.github.io/<repository>/.
+          APP_BASE_PATH: /${{ github.event.repository.name }}
+          NEXT_PUBLIC_NETWORK: testnet
+        run: |
+          npm install --install-links
+          npm run build
+
+      # The export must contain the app, not an empty directory: a deploy that
+      # publishes nothing still reports success.
+      - name: The export is there
+        run: |
+          set -euo pipefail
+          test -f app/out/index.html
+          test -f app/out/dashboard/index.html
+          test -f app/out/new/index.html
+          grep -q "/${{ github.event.repository.name }}/_next/" app/out/index.html
+
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5.0.0
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3.0.1
+        with:
+          path: app/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
