@@ -130,6 +130,40 @@ for the app's wallet connection (any SEP-43 wallet is a `Signer` to the SDK);
 bindings; `@stellar/stellar-sdk` 16.3.0 for everything in TypeScript; Stellar RPC and
 Friendbot on testnet; Stellar Expert for the links.
 
+### The integration the product rests on
+
+**Stellar Wallets Kit**, on the SCF Integration List under Wallet Connection Layers. The
+test applied is the short one: take it away, and which part of the product stops?
+
+The lifecycle is six steps and five of them are a transaction signed by a party's own
+wallet — `create_job` and `fund` by the client, `set_budget` and `submit` by the agent,
+`withdraw_to` by whoever is owed — `set_budget` is open to either party, and the agent
+is the one that prices in this flow. Only `finalize` names nobody. In the app that lands
+with [#39](https://github.com/Square-StellarNetwork/square-stellar/issues/39) the kit is
+where every one of those signatures comes from, across Freighter, xBull, Albedo, Lobstr
+and Hana, and it hands back exactly the two SEP-43 calls the SDK's `Signer` is made of,
+so nothing is adapted between them: `packages/core/src/stellar/signer.ts` is already the
+shape the kit has. Remove it and there is no client side at all.
+
+What that claim does **not** cover, because a decision that overstates itself is worse
+than none: today's flow signs through `signTransaction` alone — an account that submits
+its own transaction authorizes through the envelope signature, and `signAuthEntry` is the
+path for a signer that is not the submitter. And the agent runtime does not use the kit;
+a server process has no browser extension to ask, so it holds its own key through
+`keypairSigner`. The kit is load-bearing for the client side of a two-sided product.
+
+**CCTP** is the second integration and is deliberately not claimed as core yet: the
+kernel is paid in native XLM, so a cross-chain transfer would deliver a token no job is
+funded with. It becomes load-bearing in the same change that makes the kernel take USDC.
+Its three Stellar Testnet contracts were read back from the chain for the decision —
+`MessageTransmitter` answers `get_local_domain()` → 27.
+
+**Blend v2 was evaluated and refused**, against an earlier steer: it is struck from the
+official SCF Integration List, and the only Blend pool on Stellar Testnet prices its
+collateral through a contract whose published interface carries `set_price` — the prices
+are written by an administrator. The full reasoning, with everything read from the chain,
+is in [core-integration.md](docs/decisions/core-integration.md).
+
 ### Stellar Skills used
 
 From [skills.stellar.org](https://skills.stellar.org). Each row names the file and the
