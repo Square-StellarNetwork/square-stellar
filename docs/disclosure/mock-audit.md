@@ -65,6 +65,40 @@ that must stay writable, and the self-test fails if any pattern touches one.
 `type StepState = "todo" | "done" | "error"` is a legitimate union of string literals.
 The marker is what tells an admission apart from a value.
 
+## The one exception
+
+`app/src/lib/stellar.ts` carries `ci-allow-mock` on the line that names the
+anchor's home domain. It is the only marker in the tree, and this is the
+argument for it.
+
+The TRY rail (#58) runs through the one endpoint that serves TRY ⇄ USDC on
+Stellar Testnet, and the word the guard refuses is **in that service's own
+name**. The guard is right to see it; what it cannot see is which side of the
+line the thing sits on, so that is decided here rather than by a pattern.
+
+**Why it is allowed.** The anchor is a real service, not a test double in this
+repository: it serves SEP-1, SEP-10, SEP-12, SEP-38 and SEP-6, it signs real
+SEP-10 challenges, and the USDC it pays is Circle's real testnet USDC.
+`packages/core/test/stellar/anchor-live.test.ts` drives it end to end. What is
+simulated is the bank leg — no lira moves anywhere — because no anchor on
+testnet moves real fiat. It is the same kind of thing Friendbot is for XLM.
+
+**What makes it honest rather than hidden.** The `/deposit` screen says the
+anchor is a sandbox three times: at the top, in the step that waits for the
+bank leg, and beside the result. The README says it in the network table.
+Nothing in the product implies that lira moved.
+
+**What would make it a violation.** Claiming a real fiat rail; putting the
+anchor's own name behind a variable so the disclosure could drift from the
+endpoint; or letting a screen show a deposit as complete when the anchor has
+only promised the payout. The last is why a slow payout hands over rather than
+reporting success — the balance is what says the money arrived.
+
+The team decision that chose this rail is #66, and the alternative — Blend's
+`oraclemock` pool — was refused in [core-integration.md](../decisions/core-integration.md)
+precisely because none of the above was true of it: an administrator typed
+the prices.
+
 ## What the guard cannot see, and what to do about it
 
 A pattern scan finds a value that names nothing. It cannot find a call that *goes*
@@ -115,7 +149,7 @@ over a repository it never read.
 
 A deliberate, reviewed exception is marked `ci-allow-mock` on the line itself, never on
 the file, so it appears in the diff that introduces it and has to be argued for there.
-There are none today.
+There is one, and "The one exception" above is its argument.
 
 ## Before submission
 

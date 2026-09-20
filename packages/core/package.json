@@ -43,7 +43,8 @@
     "lifecycle": "node --experimental-strip-types scripts/lifecycle.ts",
     "lifecycle:stellar": "node --experimental-strip-types scripts/lifecycle-stellar.ts",
     "bridge": "node --experimental-strip-types scripts/bridge.ts",
-    "check:evidence": "node scripts/check-evidence.mjs"
+    "check:evidence": "node scripts/check-evidence.mjs",
+    "try-rail": "node --experimental-strip-types scripts/try-rail.ts"
   },
   "dependencies": {
     "@squaresdk/did-resolver": "file:../did-resolver",

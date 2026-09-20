@@ -13,6 +13,7 @@ import { DOCS_URL } from "@/lib/stellar";
 const links = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/new", label: "New job" },
+  { href: "/deposit", label: "Deposit" },
 ];
 
 const linkClass =

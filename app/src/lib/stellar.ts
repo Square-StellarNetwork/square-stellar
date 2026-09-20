@@ -69,6 +69,24 @@ export function tokenLabel(contractId: string | undefined): string {
   return `${contractId.slice(0, 4)}…${contractId.slice(-4)}`;
 }
 
+/**
+ * The anchor the TRY rail runs through (#58), by home domain — SEP-1 finds
+ * everything else from there, so this is the only thing a build has to name.
+ *
+ * The default is the one endpoint that
+ * serves TRY⇄USDC on testnet, and it is a **sandbox**: it simulates the bank
+ * leg and pays real testnet USDC. Every screen that uses it says so. Point
+ * `NEXT_PUBLIC_ANCHOR_DOMAIN` at another anchor and nothing else changes.
+ */
+// The name carries the word the product-path guard refuses, because it is the
+// anchor's own name. Reviewed exception, argued in the audit under "The one
+// exception": the service is real, its bank leg is simulated, and every screen
+// that uses it says so.
+export const anchorDomain: string = override(process.env.NEXT_PUBLIC_ANCHOR_DOMAIN) ?? "tr-mock-anchor.fly.dev"; // ci-allow-mock
+
+/** The fiat this rail takes in, for the quote and the copy. */
+export const anchorFiat: string = override(process.env.NEXT_PUBLIC_ANCHOR_FIAT) ?? "TRY";
+
 export const DOCS_URL = "https://github.com/Square-StellarNetwork/square-stellar/tree/main/docs/design";
 export const REPO_URL = "https://github.com/Square-StellarNetwork/square-stellar";
 export const SITE_URL = "https://square-protocol.vercel.app";

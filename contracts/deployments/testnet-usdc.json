@@ -1,0 +1,16 @@
+{
+  "network": "stellar:testnet",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "ledger": 4770884,
+  "contracts": {
+    "square_job": "CCOT26XWSUXQZUSEEVFCP5PMSF5AJEL2L764CSLQPEATVCKFRQLK2LH3"
+  },
+  "token": {
+    "code": "USDC",
+    "issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    "contractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+  },
+  "wasm": {
+    "square_job": "e497c6bbea72b06c9080281b1b08d9ec5ee2b3b01154584eb8332ee22e81c2e1"
+  }
+}
