@@ -6,7 +6,7 @@
 # one command with nothing to remember.
 set -euo pipefail
 
-export RPC_URL="${RPC_URL:-http://localhost:8000/soroban/rpc}"
+export RPC_URL="${RPC_URL:-http://localhost:8000/rpc}"
 export NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Standalone Network ; February 2017}"
 export SQUARE_DEPLOYER="${SQUARE_DEPLOYER:-square-local-deployer}"
 
