@@ -5,7 +5,7 @@
 //!
 //! MVP scope (milestone "MVP — testnet"): only what the kernel (#9) uses. The
 //! hook, module, market and screening types, the hash helpers and the
-//! `test-support` mocks are phase 2.
+//! `test-support` doubles are phase 2.
 //!
 //! Every `#[contracttype]` enum used as a storage key serializes as a vector of
 //! its variant's name, without the enum's name. Two enums in one contract with

@@ -65,3 +65,16 @@ jobs:
       # replaces the blanket directory exemption this branch used to carry.
       - name: no production-ZK claims
         run: .github/scripts/check-forbidden-phrases.sh
+      # Judging criterion 2 is "real functionality — not mocked or hardcoded",
+      # and one test double a judge can reach is an elimination (#68). The
+      # product path is listed in docs/disclosure/product-path.txt and the
+      # patterns in docs/disclosure/mock-patterns.txt, so what is enforced and
+      # what is documented cannot drift apart. The script self-tests against
+      # docs/disclosure/guard-fixtures/ first, so a gutted list fails loudly
+      # rather than reporting green over a repository it never read.
+      #
+      # Tests are excluded by construction, Rust's in-crate `src/test.rs`
+      # included: a test double in a test is how a test is written. A reviewed
+      # exception is marked "ci-allow-mock" on its own line.
+      - name: no mocks on the product path
+        run: .github/scripts/check-product-path.sh

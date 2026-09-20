@@ -1,0 +1,58 @@
+# Forbidden patterns on the product path — the single source for the guard.
+#
+# `.github/scripts/check-product-path.sh` reads this file and fails the build
+# on any match inside the paths docs/disclosure/product-path.txt lists. Add a
+# pattern here and it is enforced on the next push; there is no second place
+# to edit.
+#
+# FORMAT
+#   One POSIX extended regular expression (ERE) per line, matched
+#   case-insensitively against every line of every tracked text file on the
+#   product path. Lines starting with '#' are comments; blank lines ignored.
+#
+# WHAT THESE ARE NOT
+#   Every pattern below had to survive one test: it must not fire on honest
+#   code. That is why there is no bare `placeholder` — an HTML input's
+#   `placeholder=` attribute is a real label for a real field, and the app
+#   has twelve of them. A guard that made those unwritable would be worse
+#   than no guard, because the way round it is to delete the guard.
+#   docs/disclosure/guard-fixtures/product-path-allowed.txt holds the lines
+#   that must stay writable, and the self-test fails if a pattern touches one.
+#
+# A deliberate, reviewed exception is marked with `ci-allow-mock` on the line
+# itself, so it shows up in the diff that introduces it.
+
+# --- test doubles ---------------------------------------------------------
+# An identifier, type or comment naming something built to stand in for the
+# real thing. A leading word boundary only, because the name is what matters
+# and it is written a dozen ways: `mock`, `mocked`, `mockJob`,
+# `MockSquareClient`. The boundary is what keeps `smocker` writable.
+\bmock
+\bdummy
+\bstubbed\b
+# `fake` needs a letter after it, so an identifier is caught and the word in a
+# sentence about detecting fakes is not.
+\bfake[a-z_]
+
+# --- placeholder content --------------------------------------------------
+lorem ipsum
+\bTBD\b
+\bchangeme\b
+YOUR_[A-Z_]+
+<your-[a-z-]+>
+\bexample\.com\b
+\bexample\.org\b
+
+# --- unfinished work ------------------------------------------------------
+# A shipped path with a TODO in it is a path that is not finished; XXX and
+# HACK are the same admission in other words. Anchored to a comment marker,
+# because the scan folds case and `"todo" | "done"` is a legitimate union of
+# string literals — the app has one. The marker is what tells an admission
+# apart from a value.
+(//|#|\*|<!--|--)[[:space:]]*(TODO|FIXME|XXX|HACK)\b
+
+# --- values that name nothing ---------------------------------------------
+# The EVM zero address and the all-zero 32-byte hash: both are what a value
+# looks like when nobody set it.
+0x0{40}\b
+0x0{64}\b
