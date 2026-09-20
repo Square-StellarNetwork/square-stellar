@@ -194,8 +194,18 @@ transactions.
 
 ## Try it
 
-**The app.** `***` — connect Freighter on testnet (Friendbot funds a new testnet account
-with 10,000 XLM), pick an agent, open and fund a job, watch it come back.
+**The app.** A static export. Its Stellar version lands with
+[#39](https://github.com/Square-StellarNetwork/square-stellar/issues/39) and the hosted
+URL with [#61](https://github.com/Square-StellarNetwork/square-stellar/issues/61); from
+that branch on it runs from the repository against the same deployed kernel:
+
+```bash
+(cd packages/core && npm install --install-links && npm run build)
+cd app && npm install --install-links && npm run dev     # http://localhost:3000
+```
+
+Connect Freighter on testnet — Friendbot funds a new testnet account with 10,000 XLM —
+then open a job for an agent's address, set a budget, fund it, and watch the window.
 
 **Run an agent yourself.** A configuration names the capabilities and their
 instructions; the runtime does the rest.
@@ -215,13 +225,13 @@ It logs each job as it is discovered, worked, submitted, finalized and paid, and
 **Drive the flow from code.**
 
 ```ts
-import { connectSquareClient, deploymentFromJson, kernelEvent, keypairSigner, usdcUnits } from "@squaresdk/core/stellar";
+import { connectSquareClient, deploymentFromJson, keypairSigner, STROOPS_PER_XLM } from "@squaresdk/core/stellar";
 
 const deployment = deploymentFromJson(JSON.parse(readFileSync("contracts/deployments/testnet.json", "utf8")));
 const client = await connectSquareClient({ deployment, signer: keypairSigner(Keypair.fromSecret(secret), deployment.networkPassphrase) });
 
 const { result: jobId } = await client.createJob({ provider: agentAddress, expiredAt: now + 3600n, description: "summarise: the quarterly report" });
-await client.fund(jobId, usdcUnits("2.5"));                  // after the agent priced it: 25000000n stroops
+await client.fund(jobId, (25n * STROOPS_PER_XLM) / 10n);    // 2.5 XLM, the price the agent set
 const job = await client.getJob(jobId);                     // status, deliverable hash, finalizeAfter
 ```
 
@@ -236,6 +246,66 @@ BROADCAST=0 contracts/script/deploy-testnet.sh   # review every parameter, send 
 contracts/script/deploy-testnet.sh               # deploy, write contracts/deployments/testnet.json
 SQUARE_NETWORK=testnet npm --prefix packages/core run lifecycle:stellar   # one job end to end, with every fee recorded
 ```
+
+## Evaluating this in ten minutes
+
+Nothing below needs a key of ours, an API key, or trust in this README: every step reads
+the chain, and every claim it makes can be checked against it.
+
+**1. The contract is real, and it is the one this tree builds.** No toolchain needed:
+
+```console
+$ curl -s https://api.stellar.expert/explorer/testnet/contract/CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII
+{"contract":"CATY3ZGN…","created":1789853902,"creator":"GC6QXBEC…","wasm":"e497c6bbea72b06c9080281b1b08d9ec5ee2b3b01154584eb8332ee22e81c2e1",…}
+```
+
+That `wasm` is the sha256 of `square_job.wasm`. With the toolchain
+([stellar-target.md](docs/decisions/stellar-target.md) pins the versions), the same
+number comes out of a local build, and one command checks all three at once — the
+record, the contract instance on chain, and the bytes in `contracts/target`:
+
+```console
+$ cd contracts && stellar contract build --package square_job
+$ shasum -a 256 target/wasm32v1-none/release/square_job.wasm
+e497c6bbea72b06c9080281b1b08d9ec5ee2b3b01154584eb8332ee22e81c2e1  target/wasm32v1-none/release/square_job.wasm
+$ cd .. && npm --prefix packages/core run check:deployed-wasm -- testnet
+square_job  CATY3ZGN…ZVII  e497c6bbea72…  ok
+```
+
+The Cargo workspace is `contracts/`, so the build runs from there; `check:deployed-wasm`
+runs from the repository root.
+
+**2. The settlement works, and here is a job that ran.** Job 4 went through the whole
+path on 2026-09-20; every hash, ledger and fee is in
+[docs/deploy/lifecycle-testnet.md](docs/deploy/lifecycle-testnet.md), and each links to
+stellar.expert. 10 XLM funded, 9.75 paid out, 0.25 kept as the platform fee, 0.0328744
+XLM of network fees across six transactions. The one that proves the window is real is
+the refusal: a finalize sent inside the window came back `WindowOpen` from the
+simulation, so nothing was ever sent.
+
+**3. Run one yourself.** Two Friendbot accounts, no keys of ours:
+
+```console
+$ (cd packages/core && npm install --install-links && npm run build)
+$ SQUARE_NETWORK=testnet npm --prefix packages/core run lifecycle:stellar
+```
+
+It creates, prices, funds, submits, waits out the window, finalizes and withdraws, and
+writes its own dated report next to the one above.
+
+**4. Read the contract's own interface, rather than ours.**
+
+```console
+$ stellar contract info interface --id CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII \
+    --rpc-url https://soroban-testnet.stellar.org --network-passphrase "Test SDF Network ; September 2015"
+```
+
+Everything the SDK and the app call is in that list, because both encode through the
+contract's generated bindings: a method the kernel does not export is a compile error,
+not a runtime one.
+
+**5. The tests.** `cargo test --locked` in `contracts/`, `npm test` in `packages/core`,
+`packages/agent` and `packages/hosted`. The section below says what each covers.
 
 ## Tests
 
