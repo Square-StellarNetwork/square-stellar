@@ -136,6 +136,26 @@ Type scale: caption 12, body 16, subheading 18, heading-sm 24, heading 36, headi
 
 Status pill labels are set in carbon on a tinted wash with a coloured dot, because the tone colours themselves do not reach a 4.5:1 contrast ratio as text on the wash.
 
+### The Stellar Design System, evaluated and not adopted
+
+[`@stellar/design-system`](https://design-system.stellar.org) is the SDF's own React
+component library. It was evaluated for this app (#63) and is not used, for reasons worth
+stating rather than leaving to be inferred:
+
+- It styles with Sass and asks that its components be used as they are, with custom work
+  restricted to its palette. This app is Tailwind v4 with its own `@theme` tokens, and the
+  page is a deliberate visual argument — a white blueprint, one lavender accent, tabular
+  numbers everywhere a figure appears. Adopting SDS means replacing that, not extending it.
+- The judging criterion is that navigation is consistent and the product feels polished,
+  not that a particular library was used. A half-migration, with SDS buttons beside
+  Tailwind cards, would read worse than either done whole.
+
+What **is** taken from it is the part that should be: the Stellar logo and symbol in
+`public/brand/` come from the design system's own `build/assets/logos`, unmodified except
+for the fill, and are attributed in [NOTICE](../NOTICE) with their Apache-2.0 licence and
+the SDF's trademark line. The mark is the SDF's to define; the rest of the page is this
+project's to argue.
+
 ## Wallets
 
 The wallet button offers the SEP-43 wallets Stellar Wallets Kit carries a module for — Freighter, xBull, Albedo, Lobstr and Hana — through the kit's own modal, and the chosen wallet is remembered by its product id, so a person stays connected with that wallet on every page and after a reload. Signing goes through two calls and no more: `signTransaction` for a transaction, `signAuthEntry` for an authorization entry the account is not the source of. The network is the wallet's to choose; when it is on a different one, a notice names both and the connection is not used for writes.

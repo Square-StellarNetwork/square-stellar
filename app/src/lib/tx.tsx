@@ -15,6 +15,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
+import { errorCopy } from "./errorCopy";
 import { shortHash } from "./format";
 import { explorerLink } from "./stellar";
 
@@ -40,7 +41,13 @@ const TxContext = createContext<TxContextValue | null>(null);
  * diagnostics before anything is sent.
  */
 export function describeError(error: unknown): string {
-  if (error instanceof SquareContractError) return error.message;
+  if (error instanceof SquareContractError) {
+    // The contract answers with a name. Say what it means and what to do,
+    // and keep the name at the end so it can still be looked up.
+    const copy = errorCopy(error.errorName);
+    if (copy === null) return error.message;
+    return `${copy.what}${copy.next === undefined ? "" : ` ${copy.next}`}${error.errorName === undefined ? "" : ` (${error.errorName})`}`;
+  }
   if (error instanceof SimulationFailedError) return `${error.contract}.${error.method} was refused: ${error.reason}`;
   if (error instanceof ArchivedStateError) {
     return `${error.contract}.${error.method} touches an archived ledger entry; it has to be restored before this call works.`;
@@ -49,14 +56,16 @@ export function describeError(error: unknown): string {
     return `This call also needs ${error.addresses.join(", ")} to sign, which this wallet cannot do here.`;
   }
   if (error instanceof TrustlineMissingError) {
-    return `${error.account} holds no ${error.asset} trustline, so it cannot receive it.`;
+    // A trustline is the account's own opt-in to hold an asset; nothing can be
+    // sent to an account that has not made it.
+    return `That account has not opted in to hold ${error.asset}, so it cannot be paid in it. Open a trustline for ${error.asset} on ${shortHash(error.account)} first.`;
   }
-  if (error instanceof TransactionSendError) return `The network refused the transaction (${error.status}).`;
+  if (error instanceof TransactionSendError) return `The network would not accept the transaction (${error.status}). Nothing was charged; try again.`;
   if (error instanceof TransactionFailedError) {
-    return `Transaction ${shortHash(error.hash)} was included in ledger ${error.ledger} and applied nothing.`;
+    return `The transaction reached the chain in ledger ${error.ledger} but changed nothing, so only its fee was spent. Reload and try again (${shortHash(error.hash)}).`;
   }
   if (error instanceof TransactionPendingError) {
-    return `Transaction ${shortHash(error.hash)} is still pending after ${error.waitedSeconds}s; it may still land.`;
+    return `The network has not answered after ${error.waitedSeconds}s. It may still land, so check before sending it again (${shortHash(error.hash)}).`;
   }
   if (error instanceof WalletRequiredError) return "Connect a wallet first: this sends a transaction.";
   if (error instanceof Error) return error.message;

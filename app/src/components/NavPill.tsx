@@ -6,12 +6,13 @@ import { Logo } from "./Logo";
 import { WalletButton } from "./WalletButton";
 import { DOCS_URL } from "@/lib/stellar";
 
+// Only what the MVP actually does. /agents, /policy and /network are still
+// routes — a link to one resolves and says which issue brings it — but a
+// primary nav where three of five entries are a notice reads as unfinished,
+// which is the opposite of what it costs to leave them out (#63).
 const links = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/new", label: "New job" },
-  { href: "/agents", label: "Agents" },
-  { href: "/policy", label: "Policy" },
-  { href: "/network", label: "Network" },
 ];
 
 const linkClass =
