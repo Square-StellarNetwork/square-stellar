@@ -14,7 +14,7 @@ import { WalletButton } from "@/components/WalletButton";
 import type { Anchor } from "@squaresdk/core/stellar";
 import { Asset } from "@stellar/stellar-sdk";
 
-import { depositableAsset, openAnchorTrustline, useAnchor, useAnchorTrustline, useDeposit } from "@/lib/anchor";
+import { depositableAsset, openAnchorTrustline, useAnchor, useAnchorTrustline, useDeposit, useWithdraw } from "@/lib/anchor";
 import { formatAmount } from "@/lib/format";
 import { useSquare } from "@/lib/square";
 import { anchorDomain, anchorFiat, network } from "@/lib/stellar";
@@ -72,6 +72,9 @@ export function DepositView() {
   const assetContract = asset === null ? undefined : anchorAssetContract(anchor.data, asset.code);
   const trustline = useAnchorTrustline(assetContract);
   const { state, start, reset } = useDeposit();
+  const out = useWithdraw(assetContract);
+  const [iban, setIban] = useState("");
+  const [outAmount, setOutAmount] = useState("1");
   const { run, busy } = useTx();
   const [amount, setAmount] = useState(AMOUNTS[1] ?? "250");
 
@@ -186,6 +189,80 @@ export function DepositView() {
         </ol>
       )}
 
+      <PanelCard
+        title={`Take it back out as ${fiat}`}
+        description={`The same rail in reverse: the anchor names an account and a memo, the asset goes there as an ordinary transfer, and the ${fiat} leaves at the other end. On this sandbox no ${fiat} arrives anywhere — the transfer on Stellar is real.`}
+      >
+        <div className="flex flex-col gap-4">
+          <Field label={`Amount in ${asset?.code ?? "the asset"}`} htmlFor="withdraw-amount">
+            <input
+              id="withdraw-amount"
+              inputMode="decimal"
+              className={inputClass}
+              value={outAmount}
+              onChange={(event) => setOutAmount(event.target.value)}
+              disabled={out.state.stage !== "idle" && out.state.stage !== "failed" && out.state.stage !== "done"}
+            />
+          </Field>
+          <Field label="Where the money goes" htmlFor="withdraw-dest" hint="An IBAN or account number, as the anchor asks for it.">
+            <input
+              id="withdraw-dest"
+              className={inputClass}
+              value={iban}
+              onChange={(event) => setIban(event.target.value)}
+              placeholder="TR00 0000 0000 0000 0000 0000 00"
+              spellCheck={false}
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-3">
+            <PrimaryButton
+              size="sm"
+              disabled={
+                address === null ||
+                !trustlineOpen ||
+                iban.trim().length === 0 ||
+                outAmount.trim().length === 0 ||
+                (trustline.data?.balance ?? 0n) === 0n ||
+                (out.state.stage !== "idle" && out.state.stage !== "failed" && out.state.stage !== "done")
+              }
+              onClick={() => void out.start(outAmount.trim(), iban.trim())}
+            >
+              {out.state.stage === "idle" || out.state.stage === "failed" || out.state.stage === "done"
+                ? `Withdraw ${outAmount} ${asset?.code ?? ""}`.trim()
+                : withdrawLabel(out.state.stage)}
+            </PrimaryButton>
+            {(trustline.data?.balance ?? 0n) === 0n ? (
+              <span className="text-caption text-ash">Nothing to withdraw yet: the balance above is zero.</span>
+            ) : null}
+          </div>
+          {out.state.stage === "idle" ? null : (
+            <dl className="flex flex-col gap-3 text-caption">
+              {out.state.instructions?.accountId === undefined ? null : (
+                <Row label="Sent to the anchor">
+                  <AddressLink address={out.state.instructions.accountId} />
+                  {out.state.instructions.memo === undefined ? null : <span className="text-ash"> memo {out.state.instructions.memo}</span>}
+                </Row>
+              )}
+              {out.state.paymentHash === null ? null : (
+                <Row label="On chain">
+                  <TxLink hash={out.state.paymentHash} />
+                </Row>
+              )}
+              {out.state.transaction === null ? null : (
+                <Row label="Status">
+                  <span className="text-carbon">{STATUS_COPY[out.state.transaction.status] ?? "The anchor is working on it."}</span>{" "}
+                  <span className="text-ash">({out.state.transaction.status})</span>
+                </Row>
+              )}
+              {out.state.stage === "handed-over" ? (
+                <Row label="Where it stands">The asset is with the anchor; paying the fiat out is its side and is not waited on here.</Row>
+              ) : null}
+              {out.state.error === null ? null : <Row label="What happened">{out.state.error}</Row>}
+            </dl>
+          )}
+        </div>
+      </PanelCard>
+
       {state.stage === "idle" ? null : (
         <PanelCard
           title={
@@ -258,6 +335,13 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dd className="min-w-0 break-words text-right text-carbon">{children}</dd>
     </div>
   );
+}
+
+function withdrawLabel(stage: string): string {
+  if (stage === "signing") return "Signing in…";
+  if (stage === "asking") return "Asking the anchor…";
+  if (stage === "sending") return "Sending the asset…";
+  return "Waiting for the anchor…";
 }
 
 function stageLabel(stage: string): string {
