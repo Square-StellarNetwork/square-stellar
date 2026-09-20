@@ -161,3 +161,10 @@ export {
   USDC_UNIT,
   usdcUnits,
 } from "./usdc.js";
+export {
+  buildMemoPayment,
+  MemoPaymentError,
+  payWithMemo,
+  type MemoPaymentRequest,
+  type MemoPaymentResult,
+} from "./payment.js";

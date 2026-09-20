@@ -72,7 +72,7 @@ export function DepositView() {
   const assetContract = asset === null ? undefined : anchorAssetContract(anchor.data, asset.code);
   const trustline = useAnchorTrustline(assetContract);
   const { state, start, reset } = useDeposit();
-  const out = useWithdraw(assetContract);
+  const out = useWithdraw();
   const [iban, setIban] = useState("");
   const [outAmount, setOutAmount] = useState("1");
   const { run, busy } = useTx();
@@ -253,7 +253,7 @@ export function DepositView() {
 
       <PanelCard
         title={`Take it back out as ${fiat}`}
-        description={`The same rail in reverse: the anchor names an account and a memo, the asset goes there as an ordinary transfer, and the ${fiat} leaves at the other end. On this sandbox no ${fiat} arrives anywhere — the transfer on Stellar is real.`}
+        description={`The same rail in reverse: the anchor names an account and a memo, the asset goes there as a payment carrying that memo — which is how the anchor knows the money is yours — and the ${fiat} leaves at the other end. On this sandbox no ${fiat} arrives anywhere; the payment on Stellar is real.`}
       >
         <div className="flex flex-col gap-4">
           <Field label={`Amount in ${asset?.code ?? "the asset"}`} htmlFor="withdraw-amount">

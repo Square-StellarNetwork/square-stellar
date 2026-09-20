@@ -4,6 +4,7 @@ import {
   AnchorNeedsMoreError,
   authenticateWithAnchor,
   discoverAnchor,
+  payWithMemo,
   quotePrice,
   Sep6Client,
   sep38Asset,
@@ -252,31 +253,31 @@ const WITHDRAW_IDLE: WithdrawState = { stage: "idle", instructions: null, transa
 
 /**
  * The mirror of a deposit: the anchor names an account and a memo, the asset
- * is sent there, and the fiat leaves at the other end. The send is an
- * ordinary SAC `transfer` signed by the wallet — the same one `fund` makes —
- * so nothing new is trusted with the money.
+ * is sent there as a classic payment carrying that memo, and the fiat leaves
+ * at the other end. The memo is the only thing that tells the anchor whose
+ * withdrawal a transfer is, which is why this leg is not the SAC `transfer`
+ * the rest of the app makes — a contract call cannot carry one.
  */
-export function useWithdraw(assetContractId: string | undefined) {
+export function useWithdraw() {
   const { address, signer } = useWallet();
-  const client = useSquare();
   const [state, setState] = useState<WithdrawState>(WITHDRAW_IDLE);
 
   const reset = useCallback(() => setState(WITHDRAW_IDLE), []);
 
   const start = useCallback(
     async (amount: string, destination: string): Promise<void> => {
-      if (address === null || signer === undefined || client === null || assetContractId === undefined) {
+      if (address === null || signer === undefined) {
         setState({ ...WITHDRAW_IDLE, stage: "failed", error: "Connect a wallet first: the anchor signs you in with it." });
         return;
       }
       let session: AnchorSession;
-      let code: string;
+      let asset: { code: string; issuer: string | undefined };
       try {
         setState({ ...WITHDRAW_IDLE, stage: "signing" });
         const anchor = await discoverAnchor(anchorDomain, { expectedNetwork: network.networkPassphrase });
-        const asset = depositableAsset(anchor);
-        if (asset === null) throw new Error(`${anchorDomain} lists no asset to withdraw.`);
-        code = asset.code;
+        const found = depositableAsset(anchor);
+        if (found === null) throw new Error(`${anchorDomain} lists no asset to withdraw.`);
+        asset = { code: found.code, issuer: found.issuer };
         session = await authenticateWithAnchor(anchor, signer);
       } catch (error) {
         setState({ ...WITHDRAW_IDLE, stage: "failed", error: describeAnchorError(error) });
@@ -287,7 +288,7 @@ export function useWithdraw(assetContractId: string | undefined) {
       let instructions: Sep6WithdrawInstructions;
       try {
         setState((current) => ({ ...current, stage: "asking" }));
-        instructions = await sep6.withdraw({ assetCode: code, amount, type: "bank_account", dest: destination });
+        instructions = await sep6.withdraw({ assetCode: asset.code, amount, type: "bank_account", dest: destination });
       } catch (error) {
         if (error instanceof AnchorNeedsMoreError) {
           setState({ ...WITHDRAW_IDLE, stage: "failed", needs: error.fields, error: describeAnchorError(error) });
@@ -303,15 +304,21 @@ export function useWithdraw(assetContractId: string | undefined) {
         return;
       }
 
-      // The asset goes to the anchor as an ordinary transfer on its own SAC.
+      // A classic payment carrying the anchor's memo. Not the SAC `transfer`
+      // that `fund` makes: a memo is a field of the transaction, a contract
+      // call cannot carry one, and the memo is the only thing that tells the
+      // anchor whose withdrawal this is. Without it the asset arrives and
+      // belongs to nobody.
       let paymentHash: string;
       try {
         setState((current) => ({ ...current, stage: "sending", instructions }));
-        const sent = await client.write<void>({
-          contract: { id: assetContractId, name: "usdc" },
-          method: "transfer",
-          args: [addressScVal(address), addressScVal(to), nativeToScVal(toBaseUnits(amount), { type: "i128" })],
-          parse: () => undefined,
+        const sent = await payWithMemo(network.horizonUrl, signer, {
+          networkPassphrase: network.networkPassphrase,
+          destination: to,
+          asset: { code: asset.code, issuer: asset.issuer },
+          amount,
+          memo: instructions.memo,
+          memoType: instructions.memoType,
         });
         paymentHash = sent.hash;
       } catch (error) {
@@ -336,7 +343,7 @@ export function useWithdraw(assetContractId: string | undefined) {
         setState((current) => ({ ...current, stage: "handed-over" }));
       }
     },
-    [address, signer, client, assetContractId],
+    [address, signer],
   );
 
   return { state, start, reset };
