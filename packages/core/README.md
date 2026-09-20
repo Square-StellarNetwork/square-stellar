@@ -128,14 +128,17 @@ as the deploy scripts (#19) write it. The MVP record is the kernel and its token
   "networkPassphrase": "Test SDF Network ; September 2015",
   "ledger": 4760307,
   "contracts": { "square_job": "C…" },
-  "token": { "code": "XLM", "contractId": "C…" }
+  "token": { "code": "XLM", "contractId": "C…" },
+  "wasm": { "square_job": "<sha256 of the deployed Wasm>" }
 }
 ```
 
 `contracts` names the crates and only `square_job` must be there; the other eight are
 named as they are deployed. `token` is `{ "code": "XLM" }` for the native asset or a
 code with its `issuer`; `contractId` may be given and must then be the SAC that asset
-derives to on that network. `usdc { issuer, contractId }` and `registries { identity,
+derives to on that network. `wasm` pins each deployed crate's Wasm by sha256, which
+`npm run check:deployed-wasm` compares with the contract instance on chain and the
+working tree's build (`docs/deploy/stellar-mvp.md`). `usdc { issuer, contractId }` and `registries { identity,
 reputation, validation }` are named when the network has them, checked the same way, and
 on testnet USDC's issuer must be Circle's. `deploymentFor("stellar:testnet")` answers the
 copy compiled in here once the testnet record exists; a test asserts the copy and the

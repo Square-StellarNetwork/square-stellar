@@ -104,9 +104,10 @@ replaces `check:selectors`, which could only see a missing method.
 contracts/script/deploy-local.sh
 ```
 
-Same script against the `stellar/quickstart` network (#43): endpoint
-`http://localhost:8000/soroban/rpc`, passphrase `Standalone Network ;
-February 2017`, record written to `contracts/deployments/local.json`.
+Same script against the `stellar/quickstart` network: endpoint
+`http://localhost:8000/rpc` (`STELLAR_LOCAL_RPC_URL` in `packages/core`),
+passphrase `Standalone Network ; February 2017`, record written to
+`contracts/deployments/local.json`.
 
 ## Where the addresses live
 
@@ -122,8 +123,6 @@ failure this list exists to prevent:
 
 ## What this does not do yet
 
-The eight remaining contracts, the compliance module and the screening
-registry, USDC as the payment token, the 8004 registries and the resource-fee
-table are phase 2 (#6, #33, #45). The verifier's address is temporary until
-the ceremony fixes one proving key: every build draws fresh phase-2 entropy,
-so a verifier deployed today is already wrong for tomorrow's build.
+The eight remaining contracts, USDC as the payment token, the 8004
+registries and the resource-fee table. They were phase 2, and phase 2 was
+closed on 2026-09-20 (#48): the target is the MVP, payment in XLM.

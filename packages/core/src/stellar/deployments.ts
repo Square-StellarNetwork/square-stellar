@@ -66,6 +66,12 @@ export interface SquareDeployment {
   validationRegistry?: string;
   /** The ledger the record was written at: where an indexer starts reading events from. */
   deployLedger?: number;
+  /**
+   * The sha256 of the Wasm each contract was deployed from, by crate name,
+   * when the record carries it: what `check:deployed-wasm` compares the
+   * contract instance's executable hash and the working tree's build with.
+   */
+  wasm?: Partial<Record<SquareContractName, string>>;
 }
 
 export class UnknownDeploymentError extends Error {
@@ -176,14 +182,16 @@ function paymentToken(json: unknown, networkPassphrase: string): PaymentToken {
  *   "networkPassphrase": "Test SDF Network ; September 2015",
  *   "ledger": 4760307,
  *   "contracts": { "square_job": "C…" },
- *   "token": { "code": "XLM", "contractId": "C…" }
+ *   "token": { "code": "XLM", "contractId": "C…" },
+ *   "wasm": { "square_job": "<sha256 of the deployed Wasm>" }
  * }
  * ```
  *
  * `contracts` names the crates and only `square_job` must be there; `token`
  * is the asset the kernel was deployed with (`{ "code": "XLM" }`, or a code
- * with its `issuer`); `usdc { issuer, contractId }` and `registries
- * { identity, reputation, validation }` are named when the network has them.
+ * with its `issuer`); `wasm` pins each deployed crate's Wasm by sha256;
+ * `usdc { issuer, contractId }` and `registries { identity, reputation,
+ * validation }` are named when the network has them.
  * Every id is checked to be a strkey of the right kind, the passphrase to be
  * the network's, every SAC id to be the one its asset derives to, and on a
  * network whose profile names USDC (testnet), the record's USDC to be that
@@ -234,6 +242,19 @@ export function deploymentFromJson(json: unknown): SquareDeployment {
   if (!isAbsent(ledger)) {
     if (typeof ledger !== "number" || !Number.isInteger(ledger) || ledger < 0) throw new InvalidDeploymentError("ledger is not a ledger sequence");
     out["deployLedger"] = ledger;
+  }
+  const wasm = json["wasm"];
+  if (!isAbsent(wasm)) {
+    if (!isRecord(wasm)) throw new InvalidDeploymentError("wasm is not an object");
+    const hashes: Partial<Record<SquareContractName, string>> = {};
+    for (const name of SQUARE_CONTRACTS) {
+      const hash = wasm[name];
+      if (isAbsent(hash)) continue;
+      if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) throw new InvalidDeploymentError(`wasm.${name} is not a sha256 (64 hex digits)`);
+      if (isAbsent(contracts[name])) throw new InvalidDeploymentError(`wasm.${name} pins a contract the record does not name`);
+      hashes[name] = hash;
+    }
+    out["wasm"] = hashes;
   }
   return out as unknown as SquareDeployment;
 }

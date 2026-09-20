@@ -34,7 +34,9 @@ fi
 
 case "$network" in
   local)
-    default_rpc="http://localhost:8000/soroban/rpc"
+    # The path the stellar/quickstart image serves RPC on; the same value as
+    # packages/core's STELLAR_LOCAL_RPC_URL (network.ts).
+    default_rpc="http://localhost:8000/rpc"
     default_passphrase="Standalone Network ; February 2017"
     ;;
   testnet)
@@ -150,7 +152,8 @@ token_contract="$(stellar contract id asset \
 echo "${TOKEN_CODE} SAC ${token_contract}"
 
 step "build"
-stellar contract build
+# Only the kernel: the workspace also holds the probes and eight skeletons.
+stellar contract build --package square_job
 wasm="target/wasm32v1-none/release/square_job.wasm"
 [ -f "$wasm" ] || fail "${wasm} was not built."
 wasm_sha256="$(sha256_of "$wasm")"

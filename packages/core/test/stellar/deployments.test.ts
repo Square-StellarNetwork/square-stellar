@@ -60,6 +60,15 @@ describe("deploymentFromJson", () => {
     expect(deploymentFromJson({ ...mvp, token: { code: "XLM" } }).token).toEqual(XLM);
   });
 
+  it("keeps the sha256 the deploy script records for each deployed Wasm", () => {
+    const sha = "a".repeat(64);
+    expect(deploymentFromJson({ ...mvp, wasm: { square_job: sha } }).wasm).toEqual({ square_job: sha });
+    expect(deploymentFromJson(mvp).wasm).toBeUndefined();
+    expect(() => deploymentFromJson({ ...mvp, wasm: { square_job: "871ec2" } })).toThrow(/wasm\.square_job is not a sha256/);
+    expect(() => deploymentFromJson({ ...mvp, wasm: { arbitration: sha } })).toThrow(/pins a contract the record does not name/);
+    expect(() => deploymentFromJson({ ...mvp, wasm: "x" })).toThrow(/wasm is not an object/);
+  });
+
   it("reads a full record into the deployment shape", () => {
     const deployment = deploymentFromJson(record);
     expect(deployment).toEqual({
