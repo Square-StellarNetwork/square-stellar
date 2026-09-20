@@ -59,7 +59,7 @@ export const NATIVE_SAC_ID: string = Asset.native().contractId(network.networkPa
 export function tokenLabel(contractId: string | undefined): string {
   if (contractId === undefined) return "";
   if (contractId === NATIVE_SAC_ID) return "XLM";
-  if (contractId === network.usdc?.contractId || contractId === deployment?.usdc.contractId) return "USDC";
+  if (contractId === network.usdc?.contractId || contractId === deployment?.usdc?.contractId) return "USDC";
   return `${contractId.slice(0, 4)}…${contractId.slice(-4)}`;
 }
 
