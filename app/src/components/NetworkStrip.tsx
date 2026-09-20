@@ -6,17 +6,25 @@ import { deployment, isTestnet, NETWORK_LABEL } from "@/lib/stellar";
 import { AddressLink } from "./AddressLink";
 import { StellarMark } from "./marks";
 
-// The contracts the record names: the kernel always; the rest as they are deployed (the MVP deploys the kernel alone).
-const contracts =
+/**
+ * What this build's record names. Only the kernel is certain on the MVP
+ * stack; the rest join as their contracts are deployed, so a missing one is
+ * left out rather than drawn empty.
+ */
+const contracts: { label: string; address: string }[] =
   deployment === null
     ? []
-    : [
-        { label: "square_job", address: deployment.squareJob },
-        { label: "keeper_evaluator", address: deployment.keeperEvaluator },
-        { label: "arbitration", address: deployment.arbitration },
-        { label: "claim_market", address: deployment.claimMarket },
-        { label: "square_hook", address: deployment.squareHook },
-      ].filter((contract): contract is { label: string; address: string } => contract.address !== undefined);
+    : (
+        [
+          ["square_job", deployment.squareJob],
+          ["keeper_evaluator", deployment.keeperEvaluator],
+          ["square_hook", deployment.squareHook],
+          ["arbitration", deployment.arbitration],
+          ["claim_market", deployment.claimMarket],
+          ["policy_registry", deployment.policyRegistry],
+          [`${deployment.token.code} (token)`, deployment.token.contractId],
+        ] as const
+      ).flatMap(([label, address]) => (address === undefined ? [] : [{ label, address }]));
 
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -34,6 +42,7 @@ function Skeleton() {
 export function NetworkStrip() {
   const network = useNetwork();
   const data = network.data;
+  const window = data === undefined ? null : Number(data.config.challengeWindow);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-fog bg-paper-white">
@@ -46,10 +55,10 @@ export function NetworkStrip() {
           </span>
         </Cell>
         <Cell label="Ledger">{data ? formatBigint(BigInt(data.ledger)) : network.isError ? "Unavailable" : <Skeleton />}</Cell>
-        <Cell label="Settlement horizon">
-          {data ? (
+        <Cell label="Challenge window">
+          {window !== null ? (
             <>
-              {formatDuration(data.settlementHorizon)} <span className="text-graphite">({data.settlementHorizon} s from keeper_evaluator)</span>
+              {formatDuration(window)} <span className="text-graphite">({window} s on square_job)</span>
             </>
           ) : network.isError ? (
             "Unavailable"

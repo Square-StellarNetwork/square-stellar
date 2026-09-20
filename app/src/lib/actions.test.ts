@@ -1,152 +1,118 @@
-import { Keypair } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { minimumExpiry, refundAvailable, submitAvailable, submitDeadline } from "./actions";
-import { classify } from "./inbox";
-import type { JobSummary } from "./square";
 
-// Real Stellar accounts: a strkey's checksum makes an invented one a lie.
-const alphaAddress = Keypair.random().publicKey();
-const betaAddress = Keypair.random().publicKey();
-const gammaAddress = Keypair.random().publicKey();
-const deltaAddress = Keypair.random().publicKey();
+import { budgetAvailable, finalizeAvailable, fundAvailable, minimumExpiry, refundAvailable, rejectAvailable, submitAvailable, windowClosed } from "./actions";
+import { CLIENT, funded, job, PROVIDER, STRANGER, submitted } from "./testJob";
 
-const client = alphaAddress;
-const provider = betaAddress;
-const keeper = gammaAddress;
-const thirdParty = deltaAddress;
+/**
+ * The gates the kernel enforces, as the buttons read them. Every expectation
+ * here is a line in contracts/contracts/square_job/src/lib.rs.
+ */
 
-const job = (over: Partial<JobSummary>): JobSummary => ({
-  id: 1n,
-  client,
-  provider,
-  evaluator: keeper,
-  budget: 1_000_000n,
-  status: "Open",
-  createdAt: 1_000,
-  fundedAt: 0,
-  expiredAt: 10_000,
-  submittedAt: 0,
-  challengeEnd: 0,
-  disputed: false,
-  platformFeeBp: 100,
-  evaluatorFeeBp: 50,
-  providerBps: 0,
-  settlementHorizon: 0,
-  hook: null,
-  hookResolvesPayout: false,
-  payee: null,
-  deliverable: `0x${"00".repeat(32)}`,
-  description: "A job the tests build",
-  commitmentAtFund: null,
-  ...over,
-});
-
-describe("refundAvailable", () => {
-  it("follows SquareJob.claimRefund: expired, escrowed, and no evaluator holding the submission", () => {
-    const expired = 20_000;
-    expect(refundAvailable(job({ status: "Funded" }), keeper, expired)).toBe(true);
-    expect(refundAvailable(job({ status: "Funded" }), keeper, 5_000)).toBe(false);
-    expect(refundAvailable(job({ status: "Submitted" }), keeper, expired)).toBe(false);
-    expect(refundAvailable(job({ status: "Submitted", evaluator: thirdParty }), keeper, expired)).toBe(true);
-    expect(refundAvailable(job({ status: "Open" }), keeper, expired)).toBe(false);
-    expect(refundAvailable(job({ status: "Completed" }), keeper, expired)).toBe(false);
+describe("set_budget", () => {
+  it("is open to either party while the job is Open", () => {
+    expect(budgetAvailable(job(), CLIENT)).toBe(true);
+    expect(budgetAvailable(job(), PROVIDER)).toBe(true);
   });
 
-  it("does not read the challenge window, which KeeperEvaluator fills in for jobs it does not evaluate", () => {
-    const submittedElsewhere = job({ status: "Submitted", evaluator: thirdParty, submittedAt: 9_000, challengeEnd: 9_120 });
-    expect(refundAvailable(submittedElsewhere, keeper, 20_000)).toBe(true);
+  it("is closed to a stranger, to nobody, and once the job has moved on", () => {
+    expect(budgetAvailable(job(), STRANGER)).toBe(false);
+    expect(budgetAvailable(job(), null)).toBe(false);
+    expect(budgetAvailable(funded(), CLIENT)).toBe(false);
   });
 });
 
-describe("the inbox and the job page agree", () => {
-  const now = 20_000;
-  const cases: JobSummary[] = [
-    job({ id: 1n, status: "Funded", fundedAt: 2_000 }),
-    job({ id: 2n, status: "Funded", fundedAt: 2_000, expiredAt: 30_000 }),
-    job({ id: 3n, status: "Submitted", submittedAt: 9_000, challengeEnd: 9_120 }),
-    job({ id: 4n, status: "Submitted", evaluator: thirdParty, submittedAt: 9_000, challengeEnd: 9_120 }),
-    job({ id: 5n, status: "Submitted", evaluator: thirdParty, submittedAt: 9_000, challengeEnd: 9_120, expiredAt: 30_000 }),
-    job({ id: 6n, status: "Open" }),
-    job({ id: 7n, status: "Completed" }),
-    job({ id: 8n, status: "Expired" }),
-  ];
+describe("fund", () => {
+  it("is the client's, with a budget agreed and the expiry ahead", () => {
+    expect(fundAvailable(job(), CLIENT, 2_000)).toBe(true);
+  });
 
-  it("proposes the refund for exactly the same jobs", () => {
-    const fromJobPage = cases.filter((entry) => refundAvailable(entry, keeper, now)).map((entry) => entry.id);
-    const fromInbox = cases.filter((entry) => classify(entry, client, keeper, now) === "refund").map((entry) => entry.id);
-    expect(fromInbox).toEqual(fromJobPage);
-    expect(fromJobPage).toEqual([1n, 4n]);
+  it("is refused without a budget, past the expiry, and to anyone but the client", () => {
+    expect(fundAvailable(job({ budget: 0n }), CLIENT, 2_000)).toBe(false);
+    expect(fundAvailable(job(), CLIENT, 10_000)).toBe(false);
+    expect(fundAvailable(job(), PROVIDER, 2_000)).toBe(false);
   });
 });
 
-describe("submitAvailable", () => {
-  const horizon = 1_020;
-
-  it("follows SquareJob.submit: funded, before the expiry, and a whole settlement horizon short of it", () => {
-    const funded = job({ status: "Funded", expiredAt: 10_000, settlementHorizon: horizon });
-    expect(submitAvailable(funded, 8_000)).toBe(true);
-    expect(submitAvailable(funded, 8_980)).toBe(true);
-    expect(submitAvailable(funded, 8_981)).toBe(false);
-    expect(submitAvailable(funded, 10_000)).toBe(false);
-    expect(submitAvailable(funded, 10_001)).toBe(false);
+describe("submit", () => {
+  it("is the provider's while the job is Funded and unexpired", () => {
+    expect(submitAvailable(funded(), PROVIDER, 2_000)).toBe(true);
   });
 
-  it("names the deadline the contract enforces, not the expiry", () => {
-    expect(submitDeadline({ expiredAt: 10_000, settlementHorizon: horizon })).toBe(8_980);
-    expect(submitDeadline({ expiredAt: 10_000, settlementHorizon: 0 })).toBe(10_000);
+  it("closes at the expiry, to the second", () => {
+    expect(submitAvailable(funded(), PROVIDER, 9_999)).toBe(true);
+    expect(submitAvailable(funded(), PROVIDER, 10_000)).toBe(false);
   });
 
-  it("is closed on every status other than Funded", () => {
-    expect(submitAvailable(job({ status: "Open", expiredAt: 10_000, settlementHorizon: horizon }), 1_000)).toBe(false);
-    expect(submitAvailable(job({ status: "Submitted", expiredAt: 10_000, settlementHorizon: horizon }), 1_000)).toBe(false);
-    expect(submitAvailable(job({ status: "Completed", expiredAt: 10_000, settlementHorizon: horizon }), 1_000)).toBe(false);
-  });
-
-  it("reads the horizon snapshotted on the job, not one shared by every job", () => {
-    const now = 9_500;
-    expect(submitAvailable(job({ status: "Funded", expiredAt: 10_000, settlementHorizon: 0 }), now)).toBe(true);
-    expect(submitAvailable(job({ status: "Funded", expiredAt: 10_000, settlementHorizon: horizon }), now)).toBe(false);
+  it("is nobody else's, and not before the escrow is there", () => {
+    expect(submitAvailable(funded(), CLIENT, 2_000)).toBe(false);
+    expect(submitAvailable(job(), PROVIDER, 2_000)).toBe(false);
   });
 });
 
-describe("the inbox and the job page agree on the submit gate", () => {
-  const now = 20_000;
-  const horizon = 1_020;
-  const cases: JobSummary[] = [
-    job({ id: 1n, status: "Funded", fundedAt: 2_000, expiredAt: 30_000, settlementHorizon: horizon }),
-    job({ id: 2n, status: "Funded", fundedAt: 2_000, expiredAt: 21_020, settlementHorizon: horizon }),
-    job({ id: 3n, status: "Funded", fundedAt: 2_000, expiredAt: 21_019, settlementHorizon: horizon }),
-    job({ id: 4n, status: "Funded", fundedAt: 2_000, expiredAt: 19_000, settlementHorizon: horizon }),
-    job({ id: 5n, status: "Funded", fundedAt: 2_000, expiredAt: 20_000, settlementHorizon: 0 }),
-    job({ id: 6n, status: "Submitted", submittedAt: 9_000, challengeEnd: 9_120, expiredAt: 30_000, settlementHorizon: horizon }),
-    job({ id: 7n, status: "Open", expiredAt: 30_000, settlementHorizon: horizon }),
-  ];
+describe("the challenge window", () => {
+  const live = submitted(1_200); // window 30 s → finalizeAfter 1_230
 
-  it("proposes the submit for exactly the same jobs", () => {
-    const fromJobPage = cases.filter((entry) => submitAvailable(entry, now)).map((entry) => entry.id);
-    const fromInbox = cases.filter((entry) => classify(entry, provider, keeper, now) === "submit").map((entry) => entry.id);
-    expect(fromInbox).toEqual(fromJobPage);
-    expect(fromJobPage).toEqual([1n, 2n]);
+  it("closes exactly at finalizeAfter", () => {
+    expect(windowClosed(live, 1_229)).toBe(false);
+    expect(windowClosed(live, 1_230)).toBe(true);
   });
 
-  it("leaves a funded job inside its last settlement horizon out of the submit group", () => {
-    const inTheLastHorizon = job({ id: 3n, status: "Funded", fundedAt: 2_000, expiredAt: 21_019, settlementHorizon: horizon });
-    expect(inTheLastHorizon.expiredAt).toBeGreaterThan(now);
-    expect(submitAvailable(inTheLastHorizon, now)).toBe(false);
-    expect(classify(inTheLastHorizon, provider, keeper, now)).toBeNull();
+  it("has not started while nothing is submitted", () => {
+    expect(windowClosed(funded(), 9_999)).toBe(false);
+  });
+
+  it("hands finalize to anyone once it has closed, and to nobody before", () => {
+    expect(finalizeAvailable(live, 1_229)).toBe(false);
+    expect(finalizeAvailable(live, 1_230)).toBe(true);
+    expect(finalizeAvailable(funded(), 9_999)).toBe(false);
+  });
+});
+
+describe("reject", () => {
+  it("is the client's at any time while Open or Funded", () => {
+    expect(rejectAvailable(job(), CLIENT, 2_000)).toBe(true);
+    expect(rejectAvailable(funded(), CLIENT, 9_999)).toBe(true);
+  });
+
+  it("is the client's inside the window once submitted, and not after it", () => {
+    const live = submitted(1_200);
+    expect(rejectAvailable(live, CLIENT, 1_229)).toBe(true);
+    expect(rejectAvailable(live, CLIENT, 1_230)).toBe(false);
+  });
+
+  it("is nobody else's, ever", () => {
+    expect(rejectAvailable(funded(), PROVIDER, 2_000)).toBe(false);
+    expect(rejectAvailable(funded(), STRANGER, 2_000)).toBe(false);
+    expect(rejectAvailable(funded(), null, 2_000)).toBe(false);
+  });
+
+  it("is closed once the job has settled", () => {
+    expect(rejectAvailable(job({ status: "Completed" }), CLIENT, 2_000)).toBe(false);
+  });
+});
+
+describe("claim_refund", () => {
+  it("opens at the expiry on a funded job, for anyone", () => {
+    expect(refundAvailable(funded(), 9_999)).toBe(false);
+    expect(refundAvailable(funded(), 10_000)).toBe(true);
+  });
+
+  it("is closed on a job that was delivered: a submission stops that clock", () => {
+    expect(refundAvailable(submitted(1_200), 20_000)).toBe(false);
+  });
+
+  it("is closed on a job nobody funded", () => {
+    expect(refundAvailable(job(), 20_000)).toBe(false);
   });
 });
 
 describe("minimumExpiry", () => {
-  it("leaves a whole settlement horizon of margin, because submit measures the horizon again", () => {
-    expect(minimumExpiry(1_000, 420)).toEqual({ at: 1_840, horizon: 420, margin: 420 });
+  it("is one window for the settlement and as much again of margin", () => {
+    expect(minimumExpiry(1_000, 120)).toEqual({ at: 1_240, window: 120, margin: 120 });
   });
 
-  it("puts the floor far enough out that a job created at it is still submittable", () => {
-    const now = 1_000;
-    const horizon = 420;
-    const floor = minimumExpiry(now, horizon);
-    const submitsAtTheEndOfTheMargin = now + floor.margin;
-    expect(floor.at).toBeGreaterThanOrEqual(submitsAtTheEndOfTheMargin + horizon);
+  it("leaves room to submit before the expiry and still run the window past it", () => {
+    const floor = minimumExpiry(1_000, 30);
+    expect(floor.at - 1_000).toBeGreaterThan(30);
   });
 });

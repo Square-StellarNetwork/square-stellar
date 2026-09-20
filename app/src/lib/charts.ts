@@ -1,4 +1,4 @@
-import type { JobStatusName } from "./contracts";
+import { platformFee as platformFeeOf, type JobStatusName } from "./job";
 import { jobPhase, type JobPhase } from "./phase";
 import type { JobSummary } from "./square";
 
@@ -23,17 +23,17 @@ export const chartFont = "OpenRunde, ui-sans-serif, system-ui, -apple-system, Bl
 
 export const phaseColor: Record<JobPhase, string> = {
   open: chartColors.sky,
-  funded: chartColors.sky,
-  submitted: chartColors.amber,
+  "needs-budget": chartColors.graphite,
+  funded: chartColors.iris,
+  refundable: chartColors.magenta,
   "in-window": chartColors.amber,
   finalizable: chartColors.amber,
-  disputed: chartColors.magenta,
   completed: chartColors.mint,
   rejected: chartColors.magenta,
   expired: chartColors.ash,
 };
 
-export const PHASE_ORDER: JobPhase[] = ["open", "funded", "submitted", "in-window", "finalizable", "disputed", "completed", "rejected", "expired"];
+export const PHASE_ORDER: JobPhase[] = ["needs-budget", "open", "funded", "in-window", "finalizable", "refundable", "completed", "rejected", "expired"];
 
 export const HOUR = 3_600;
 export const DAY = 86_400;
@@ -119,55 +119,46 @@ export function phaseBreakdown(jobs: readonly JobSummary[], now: number, labels:
 export interface PayoutSplit {
   budget: number;
   platformFee: number;
-  evaluatorFee: number;
-  net: number;
-  providerShare: number;
-  clientShare: number;
-  providerBps: number;
+  /** What `finalize` credits the provider: the budget less the fee. */
+  payout: number;
 }
 
-export function payoutSplit(
-  record: { budget: bigint; platformFeeBp: number; evaluatorFeeBp: number; providerBps: number; status: JobStatusName },
-  netPayout: bigint,
-): PayoutSplit {
+/** The kernel's own arithmetic in tokens: truncated basis points off the budget. */
+export function payoutSplit(record: { budget: bigint; platformFeeBps: number }): PayoutSplit {
   const budget = tokens(record.budget);
-  const platformFee = (budget * record.platformFeeBp) / 10_000;
-  const evaluatorFee = (budget * record.evaluatorFeeBp) / 10_000;
-  const net = netPayout > 0n ? tokens(netPayout) : Math.max(0, budget - platformFee - evaluatorFee);
-  const providerBps = record.status === "Completed" ? record.providerBps : 10_000;
-  const providerShare = (net * providerBps) / 10_000;
-  return { budget, platformFee, evaluatorFee, net, providerShare, clientShare: net - providerShare, providerBps };
+  const platformFee = tokens(platformFeeOf(record));
+  return { budget, platformFee, payout: budget - platformFee };
 }
 
 export interface FeeTotals {
   platform: number;
-  evaluator: number;
+  /** Credited to providers by `finalize`. */
   netPaid: number;
+  /** Credited back to clients by `reject` and `claim_refund`. */
   refunded: number;
-  splitToClient: number;
   completed: number;
   rejected: number;
+  refundedJobs: number;
 }
 
+/**
+ * Where the escrow of the terminal jobs went. A rejected job only refunds
+ * what was escrowed, so one rejected while still Open counts as neither.
+ */
 export function feeTotals(jobs: readonly JobSummary[]): FeeTotals {
-  const totals: FeeTotals = { platform: 0, evaluator: 0, netPaid: 0, refunded: 0, splitToClient: 0, completed: 0, rejected: 0 };
+  const totals: FeeTotals = { platform: 0, netPaid: 0, refunded: 0, completed: 0, rejected: 0, refundedJobs: 0 };
   for (const job of jobs) {
     if (job.status === "Completed") {
-      const budget = tokens(job.budget);
-      const platform = (budget * job.platformFeeBp) / 10_000;
-      const evaluator = (budget * job.evaluatorFeeBp) / 10_000;
-      const net = budget - platform - evaluator;
-      const payeeShare = (net * job.providerBps) / 10_000;
-      const clientShare = net - payeeShare;
-      totals.platform += platform;
-      totals.evaluator += evaluator;
-      totals.netPaid += payeeShare;
-      totals.splitToClient += clientShare;
-      totals.refunded += clientShare;
+      const split = payoutSplit(job);
+      totals.platform += split.platformFee;
+      totals.netPaid += split.payout;
       totals.completed += 1;
     } else if (job.status === "Rejected" && job.fundedAt > 0) {
       totals.refunded += tokens(job.budget);
       totals.rejected += 1;
+    } else if (job.status === "Expired") {
+      totals.refunded += tokens(job.budget);
+      totals.refundedJobs += 1;
     }
   }
   return totals;
@@ -204,9 +195,8 @@ export function settlementClock(input: {
   fundedAt: number;
   submittedAt: number;
   expiredAt: number;
-  challengeEnd: number;
-  disputedAt: number;
-  resolveBy: number;
+  /** `submittedAt + challengeWindow`; zero until submitted. */
+  finalizeAfter: number;
   status: JobStatusName;
   now: number;
 }): SettlementClock {
@@ -226,14 +216,9 @@ export function settlementClock(input: {
   }
   if (submittedAt) {
     marks.push({ key: "submitted", label: "Submitted", at: submittedAt });
-    if (input.challengeEnd > submittedAt) {
-      segments.push({ key: "challenge", label: "Challenge window", from: submittedAt, to: input.challengeEnd, color: chartColors.amber, state: state(submittedAt, input.challengeEnd) });
-      marks.push({ key: "window", label: "Window closes", at: input.challengeEnd });
-    }
-    if (input.disputedAt > 0 && input.resolveBy > input.disputedAt) {
-      segments.push({ key: "dispute", label: "Dispute window", from: input.disputedAt, to: input.resolveBy, color: chartColors.magenta, state: state(input.disputedAt, input.resolveBy) });
-      marks.push({ key: "disputed", label: "Disputed", at: input.disputedAt, emphasis: true });
-      marks.push({ key: "resolve", label: "Resolve by", at: input.resolveBy });
+    if (input.finalizeAfter > submittedAt) {
+      segments.push({ key: "challenge", label: "Challenge window", from: submittedAt, to: input.finalizeAfter, color: chartColors.amber, state: state(submittedAt, input.finalizeAfter) });
+      marks.push({ key: "window", label: "Window closes", at: input.finalizeAfter });
     }
   }
   const activityEnd = Math.max(...segments.map((segment) => segment.to), ...marks.map((mark) => mark.at), settled ? input.createdAt : Math.min(now, input.expiredAt));

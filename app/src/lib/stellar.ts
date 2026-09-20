@@ -53,11 +53,14 @@ export function explorerLink(subject: ExplorerSubject, id: string): string | nul
 export const NATIVE_SAC_ID: string = Asset.native().contractId(network.networkPassphrase);
 
 /**
- * What to call the token a contract id names: the two the stack can be
- * deployed with, and the id itself for anything else.
+ * What to call the token a contract id names. The deployment record says what
+ * the kernel was deployed with, so that answers first; the native SAC and
+ * Circle's USDC are named for a record this build does not carry, and
+ * anything else is called by its own id rather than guessed at.
  */
 export function tokenLabel(contractId: string | undefined): string {
   if (contractId === undefined) return "";
+  if (deployment !== null && contractId === deployment.token.contractId) return deployment.token.code;
   if (contractId === NATIVE_SAC_ID) return "XLM";
   if (contractId === network.usdc?.contractId || contractId === deployment?.usdc?.contractId) return "USDC";
   return `${contractId.slice(0, 4)}…${contractId.slice(-4)}`;

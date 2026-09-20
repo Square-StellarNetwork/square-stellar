@@ -17,16 +17,14 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
 import { StatusPill, phaseTone } from "@/components/StatusPill";
 import { TabBar } from "@/components/TabBar";
-import { keeperEvaluates } from "@/lib/actions";
 import { escrowFlow, feeTotals, phaseBreakdown } from "@/lib/charts";
 import { formatAmount, formatBigint, formatCountdown, formatTimestamp } from "@/lib/format";
 import { inputClass } from "@/components/Field";
 import { jobPhase, PHASE_LABELS, RECENT_JOB_WINDOW, useJobs, useNow, usePaymentTokenLabel, usePositions, useSquare, type JobPhase, type JobSummary } from "@/lib/square";
 import { matchesQuery } from "@/lib/stats";
 import { describeError, useTx } from "@/lib/tx";
-import { deployment, NETWORK_LABEL } from "@/lib/stellar";
+import { NETWORK_LABEL } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import { withdrawTo } from "@/lib/contracts";
 
 const tabs = [
   { id: "all", label: "All" },
@@ -34,7 +32,7 @@ const tabs = [
   { id: "in-window", label: "In window" },
   { id: "finalizable", label: "Finalizable" },
   { id: "completed", label: "Completed" },
-  { id: "disputed", label: "Disputed" },
+  { id: "refundable", label: "Refundable" },
 ];
 
 function matchesTab(job: JobSummary, phase: JobPhase, tab: string): boolean {
@@ -47,8 +45,8 @@ function matchesTab(job: JobSummary, phase: JobPhase, tab: string): boolean {
       return phase === "finalizable";
     case "completed":
       return job.status === "Completed";
-    case "disputed":
-      return job.disputed;
+    case "refundable":
+      return phase === "refundable";
     default:
       return true;
   }
@@ -56,13 +54,10 @@ function matchesTab(job: JobSummary, phase: JobPhase, tab: string): boolean {
 
 function ChallengeCell({ job, now }: { job: JobSummary; now: number }) {
   if (job.status === "Submitted") {
-    if (job.disputed) return <span className="text-graphite">Paused by dispute</span>;
-    if (!keeperEvaluates(job, deployment?.keeperEvaluator ?? "")) return <span className="text-ash">Another evaluator</span>;
-    if (job.challengeEnd === 0) return <span className="text-ash">Unknown</span>;
     return (
       <span className="flex flex-col">
-        <span className="tabular-nums text-carbon">{formatCountdown(job.challengeEnd, now)}</span>
-        <span className="text-caption tabular-nums text-ash">{formatTimestamp(job.challengeEnd)}</span>
+        <span className="tabular-nums text-carbon">{formatCountdown(job.finalizeAfter, now)}</span>
+        <span className="text-caption tabular-nums text-ash">{formatTimestamp(job.finalizeAfter)}</span>
       </span>
     );
   }
@@ -92,7 +87,7 @@ export function DashboardView() {
     inWindow: withPhase.filter(({ phase }) => phase === "in-window").length,
     finalizable: withPhase.filter(({ phase }) => phase === "finalizable").length,
     completed: withPhase.filter(({ job }) => job.status === "Completed").length,
-    disputed: withPhase.filter(({ job }) => job.disputed).length,
+    refundable: withPhase.filter(({ phase }) => phase === "refundable").length,
   };
   const tabCounts: Record<string, number> = {
     all: jobs.length,
@@ -100,7 +95,7 @@ export function DashboardView() {
     "in-window": counts.inWindow,
     finalizable: counts.finalizable,
     completed: counts.completed,
-    disputed: counts.disputed,
+    refundable: counts.refundable,
   };
   const filtered = withPhase.filter(({ job, phase }) => matchesTab(job, phase, tab) && matchesQuery(job, query));
   const olderAvailable = jobsQuery.data ? jobsQuery.data.counter > BigInt(jobsQuery.data.scanned) : false;
@@ -224,7 +219,7 @@ export function DashboardView() {
                     const holder = address;
                     const amount = positions.data?.withdrawable;
                     if (client === null || holder === null || amount === undefined || amount === 0n) return;
-                    void run("Withdraw", () => withdrawTo(client, holder, holder, amount));
+                    void run("Withdraw", () => client.withdrawTo(holder, amount));
                   }}
                 >
                   Withdraw
