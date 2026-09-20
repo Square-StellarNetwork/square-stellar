@@ -58,7 +58,7 @@ const agent = createStellarAgent({
   store: fileStore("./atlas.provider.json"), // the jobs it has seen, across restarts
 }).capability("summarise", {
   description: "The first three words.",
-  price: "2.5", // XLM, shown to hirers; the kernel does not enforce it
+  price: "2.5", // XLM: a job funded below it is left alone
   handler: async ({ input }) => input.split(/\s+/).slice(0, 3).join(" "),
 });
 await agent.listen(3000);
@@ -79,7 +79,11 @@ The loop (`createProvider`) is the agent without the HTTP: `tick()` is one pass
 a restart resumes: an output that never reached the chain is submitted rather than
 computed again, a handler that failed is retried up to `maxAttempts` while the job is
 still Funded, and what the client did (`reject`) or time did (expiry) is read off the
-chain each tick. `chainOf(client)` is the loop's view of `@squaresdk/core/stellar`'s
+chain each tick. The kernel enforces no price, so the agent does: a job funded below
+the capability's `price` (`minimumBudgetFor` on the loop) is left alone, before the
+handler runs. The HTTP surface answers cross-origin reads (`cors`: every origin by
+default, a list, or `false`), since the hirer's app fetches the deliverable from a
+browser. `chainOf(client)` is the loop's view of `@squaresdk/core/stellar`'s
 client; a test hands it a kernel in memory.
 
 `npm test` runs the loop against that in-memory kernel (the lifecycle, the capability

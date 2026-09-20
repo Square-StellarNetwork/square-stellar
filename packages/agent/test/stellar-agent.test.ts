@@ -43,6 +43,37 @@ describe("createStellarAgent", () => {
     expect((await get("/jobs/1")).body).toMatchObject({ jobId: "1", delivered: true });
   });
 
+  it("enforces a capability's price and answers a browser's cross-origin read", async () => {
+    const kernel = new FakeKernel();
+    const agent = createStellarAgent({ name: "Atlas", description: "", chain: kernel.chainFor(AGENT), startLedger: 1 }).capability("summarise", {
+      description: "",
+      price: "2.5",
+      handler: async ({ input }) => input,
+    });
+    const cheap = kernel.create(CLIENT, AGENT, "x");
+    kernel.fund(cheap, 24_999_999n); // 2.4999999 XLM
+    const fair = kernel.create(CLIENT, AGENT, "y");
+    kernel.fund(fair, 25_000_000n);
+    await agent.provider.tick();
+    expect(agent.provider.job(cheap)).toMatchObject({ done: true, attempts: 0 });
+    expect(agent.provider.job(fair)).toMatchObject({ status: "Submitted" });
+
+    const preflight = await agent.app.fetch(new Request(`http://agent/jobs/${fair}/deliverable`, { method: "OPTIONS", headers: { Origin: "https://app.example", "Access-Control-Request-Method": "GET" } }));
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
+    const read = await agent.app.fetch(new Request(`http://agent/jobs/${fair}/deliverable`, { headers: { Origin: "https://app.example" } }));
+    expect(read.status).toBe(200);
+    expect(read.headers.get("access-control-allow-origin")).toBe("*");
+
+    const restricted = createStellarAgent({ name: "Atlas", description: "", chain: kernel.chainFor(AGENT), cors: ["https://app.example"] });
+    const allowed = await restricted.app.fetch(new Request("http://agent/health", { headers: { Origin: "https://app.example" } }));
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://app.example");
+    const other = await restricted.app.fetch(new Request("http://agent/health", { headers: { Origin: "https://evil.example" } }));
+    expect(other.headers.get("access-control-allow-origin")).toBeNull();
+    const none = createStellarAgent({ name: "Atlas", description: "", chain: kernel.chainFor(AGENT), cors: false });
+    expect((await none.app.fetch(new Request("http://agent/health", { headers: { Origin: "https://app.example" } }))).headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("needs a client or a deployment and a signer when no chain is given", () => {
     expect(() => createStellarAgent({ name: "x", description: "y" })).toThrow(/needs a client/);
   });

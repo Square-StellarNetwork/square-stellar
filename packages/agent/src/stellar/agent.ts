@@ -1,12 +1,17 @@
 import { serve } from "@hono/node-server";
-import { createSquareClient, JOB_STATUS_NAMES, type Signer, type SquareClient, type SquareDeployment } from "@squaresdk/core/stellar";
+import { createSquareClient, JOB_STATUS_NAMES, usdcUnits, type Signer, type SquareClient, type SquareDeployment } from "@squaresdk/core/stellar";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { chainOf, type ProviderChain } from "./chain.js";
 import { createProvider, memoryStore, type JobHandler, type Provider, type ProviderEvent, type ProviderStore, type TrackedJob } from "./provider.js";
 
 export interface StellarCapabilityOptions {
   description: string;
-  /** Decimal, in the payment token (XLM on testnet): what the agent asks for, shown to hirers. Not enforced by the kernel. */
+  /**
+   * Decimal, in the payment token (XLM on testnet): what the agent asks for.
+   * Shown to hirers, and enforced here rather than by the kernel: a job
+   * funded below it is not worked.
+   */
   price?: string | undefined;
   handler: JobHandler;
 }
@@ -29,6 +34,13 @@ export interface StellarAgentOptions {
   maxAttempts?: number | undefined;
   handlerTimeoutMs?: number | undefined;
   onEvent?: ((event: ProviderEvent) => void) | undefined;
+  /**
+   * Which origins may read the agent from a browser: the hirer's app fetches
+   * the deliverable cross-origin. Every origin by default (everything served
+   * is public and read-only); a list to restrict, `false` to send no CORS
+   * headers.
+   */
+  cors?: string | string[] | false | undefined;
 }
 
 export interface StellarListening {
@@ -58,8 +70,9 @@ const DEFAULT_POLL_MS = 10_000;
  * An agent for hire on Stellar, the MVP: declare what it does, give it the
  * key jobs are created for, listen. It watches the kernel for jobs naming it
  * as provider, works each once funded, submits, finalizes after the window
- * and withdraws (`createProvider`); and it serves what the hirer needs after
- * paying: the deliverable behind the hash on chain.
+ * and withdraws (`createProvider`), and leaves alone a job funded below the
+ * capability's price; and it serves what the hirer needs after paying: the
+ * deliverable behind the hash on chain, readable from a browser (CORS).
  *
  *   GET /health                      name, account, what it is tracking
  *   GET /capabilities                what it does and asks for
@@ -82,6 +95,10 @@ export function createStellarAgent(options: StellarAgentOptions): StellarAgent {
   const provider = createProvider({
     chain,
     handlers,
+    minimumBudgetFor: (id) => {
+      const price = declared.get(id)?.price;
+      return price === undefined ? undefined : usdcUnits(price);
+    },
     defaultCapability: options.defaultCapability,
     startLedger: options.startLedger,
     store: options.store ?? memoryStore(),
@@ -93,6 +110,7 @@ export function createStellarAgent(options: StellarAgentOptions): StellarAgent {
   const capabilities = () => [...declared.entries()].map(([id, c]) => ({ id, description: c.description, ...(c.price !== undefined ? { price: c.price } : {}) }));
 
   const app = new Hono();
+  if (options.cors !== false) app.use("*", cors({ origin: options.cors ?? "*", allowMethods: ["GET", "OPTIONS"] }));
   app.get("/health", (c) =>
     c.json({
       name: options.name,
