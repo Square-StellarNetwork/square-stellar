@@ -14,7 +14,6 @@ import { Step, type StepState } from "@/components/Step";
 import { WalletButton } from "@/components/WalletButton";
 import { minimumExpiry } from "@/lib/actions";
 import { addressInputError, readAddressInput } from "@/lib/address";
-import { createJob, setBudget as setBudgetOnChain } from "@/lib/contracts";
 import { formatAmount, formatBps, formatDuration, formatTimestamp, fromDatetimeLocal, parseAmount, toDatetimeLocal } from "@/lib/format";
 import { deployment, NETWORK_LABEL } from "@/lib/stellar";
 import { useNetwork, useNow, usePaymentTokenLabel, useSquare } from "@/lib/square";
@@ -76,8 +75,8 @@ export function NewJobView() {
   const [stage, setStage] = useState<"create" | "budget" | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
 
-  const horizon = network.data?.settlementHorizon ?? null;
-  const floor = horizon === null ? null : minimumExpiry(now, horizon);
+  const window = network.data === undefined ? null : Number(network.data.config.challengeWindow);
+  const floor = window === null ? null : minimumExpiry(now, window);
 
   // The floor moves with the chain clock, so a preset re-reads it once the
   // horizon is known rather than leaving a date the kernel would refuse.
@@ -86,7 +85,7 @@ export function NewJobView() {
     const preset = EXPIRY_PRESETS.find((entry) => entry.id === expiryPreset);
     if (preset === undefined) return;
     setExpiry(toDatetimeLocal(Math.max(now + preset.seconds, floor.at + 60)));
-  }, [expiryPreset, floor === null, horizon]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [expiryPreset, floor === null, window]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const providerInput = readAddressInput(provider);
   const providerError = addressInputError(providerInput);
@@ -99,7 +98,7 @@ export function NewJobView() {
       : expirySeconds === null
         ? "Enter a date and time."
         : floor !== null && expirySeconds < floor.at
-          ? `The expiry must be at least ${formatDuration(floor.horizon + floor.margin)} from now: one settlement horizon of ${formatDuration(floor.horizon)} for the challenge and dispute windows, plus ${formatDuration(floor.margin)} of margin, because submit measures the same horizon again from its own ledger and a job created at the bare minimum could never be submitted.`
+          ? `The expiry must be at least ${formatDuration(floor.window + floor.margin)} from now: one challenge window of ${formatDuration(floor.window)} for the settlement, plus ${formatDuration(floor.margin)} of margin, because the provider has to be able to submit before the expiry and the window then runs on past it.`
           : null;
   const expiryValid = expirySeconds !== null && expiryError === null;
 
@@ -117,12 +116,9 @@ export function NewJobView() {
 
   const fees =
     budgetAmount !== null && budgetAmount > 0n && network.data
-      ? {
-          platform: (budgetAmount * BigInt(network.data.platformFeeBp)) / 10_000n,
-          evaluator: (budgetAmount * BigInt(network.data.evaluatorFeeBp)) / 10_000n,
-        }
+      ? { platform: (budgetAmount * BigInt(network.data.config.platformFeeBps)) / 10_000n }
       : null;
-  const net = fees && budgetAmount !== null ? budgetAmount - fees.platform - fees.evaluator : null;
+  const net = fees && budgetAmount !== null ? budgetAmount - fees.platform : null;
 
   const providerState: StepState = providerValid ? "done" : providerError ? "error" : "todo";
   const expiryState: StepState = expiryValid ? "done" : expiryError ? "error" : "todo";
@@ -144,18 +140,10 @@ export function NewJobView() {
   }
 
   async function submit() {
-    const stack = deployment;
-    if (!ready || expirySeconds === null || providerInput.kind !== "valid" || address === null || square === null || stack === null) return;
+    if (!ready || expirySeconds === null || providerInput.kind !== "valid" || address === null || square === null) return;
     setStage("create");
     const result = await run("Create job", () =>
-      createJob(square, {
-        client: address,
-        provider: providerInput.address,
-        evaluator: stack.keeperEvaluator,
-        expiredAt: expirySeconds,
-        description: description.trim(),
-        hook: stack.squareHook,
-      }),
+      square.createJob({ provider: providerInput.address, expiredAt: expirySeconds, description: description.trim() }),
     );
     if (result === undefined) {
       setStage(null);
@@ -166,7 +154,7 @@ export function NewJobView() {
     let budgetFailed = false;
     if (budgetAmount !== null && budgetAmount > 0n) {
       setStage("budget");
-      const set = await run("Set budget", () => setBudgetOnChain(square, address, jobId, budgetAmount));
+      const set = await run("Set budget", () => square.setBudget(jobId, budgetAmount));
       if (set === undefined) budgetFailed = true;
       else budgetHash = set.hash;
     }
@@ -233,10 +221,10 @@ export function NewJobView() {
                   created.budgetHash !== undefined
                     ? { title: "Fund the escrow", body: `Fund from the job page. One signature moves the ${token} and fixes the fee basis points; there is no approval step on Stellar.` }
                     : { title: "Set the budget, then fund", body: "Set a budget on the job page first: funding a job with no budget is refused with ZeroBudget." },
-                  { title: "Hand the job to the provider", body: "Share the job link. The provider submits the deliverable hash before the deadline, which is the expiry less the settlement horizon." },
+                  { title: "Hand the job to the provider", body: "Share the job link. The provider submits the deliverable hash before the job expires; the challenge window starts from that submission." },
                   {
                     title: "Watch the challenge window",
-                    body: `After submission you have ${network.data ? formatDuration(network.data.window.challengeWindow) : "the challenge window"} to dispute; otherwise anyone finalizes and the payee is credited.`,
+                    body: `After submission you have ${window === null ? "the challenge window" : formatDuration(window)} to reject and take the budget back; otherwise anyone may finalize and the provider is credited.`,
                   },
                 ].map((step, index) => (
                   <li key={step.title} className="flex gap-3">
@@ -399,11 +387,8 @@ export function NewJobView() {
               </Row>
               {fees && net !== null && network.data ? (
                 <>
-                  <Row label={`Platform fee ${formatBps(network.data.platformFeeBp)}`}>
+                  <Row label={`Platform fee ${formatBps(network.data.config.platformFeeBps)}`}>
                     <Amount value={fees.platform} />
-                  </Row>
-                  <Row label={`Evaluator fee ${formatBps(network.data.evaluatorFeeBp)}`}>
-                    <Amount value={fees.evaluator} />
                   </Row>
                   <Row label="Net to the provider">
                     <Amount value={net} className="font-medium" />
@@ -413,19 +398,19 @@ export function NewJobView() {
             </dl>
 
             <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-fog bg-linen p-5">
-              <p className="text-caption font-medium text-carbon">Bound at creation</p>
+              <p className="text-caption font-medium text-carbon">Fixed at creation</p>
               <dl className="flex flex-col gap-2 text-caption">
                 <div className="flex justify-between gap-4">
-                  <dt className="text-graphite">Evaluator</dt>
-                  <dd>{deployment === null ? <span className="text-ash">No deployment</span> : <AddressLink address={deployment.keeperEvaluator} label="keeper_evaluator" />}</dd>
+                  <dt className="text-graphite">Kernel</dt>
+                  <dd>{deployment === null ? <span className="text-ash">No deployment</span> : <AddressLink address={deployment.squareJob} label="square_job" />}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <dt className="text-graphite">Hook</dt>
-                  <dd>{deployment === null ? <span className="text-ash">No deployment</span> : <AddressLink address={deployment.squareHook} label="square_hook" />}</dd>
+                  <dt className="text-graphite">Paid in</dt>
+                  <dd className="tabular-nums text-carbon">{token || "Reading"}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <dt className="text-graphite">Settlement horizon</dt>
-                  <dd className="tabular-nums text-carbon">{horizon === null ? "Reading" : formatDuration(horizon)}</dd>
+                  <dt className="text-graphite">Challenge window</dt>
+                  <dd className="tabular-nums text-carbon">{window === null ? "Reading" : formatDuration(window)}</dd>
                 </div>
               </dl>
               <p className="text-caption text-ash">

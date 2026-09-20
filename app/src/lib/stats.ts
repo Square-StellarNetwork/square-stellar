@@ -1,3 +1,4 @@
+import { payout } from "./job";
 import type { JobsSnapshot, JobSummary } from "./square";
 
 export interface LiveStats {
@@ -10,17 +11,13 @@ export interface LiveStats {
   scanned: number;
 }
 
-const BPS = 10_000n;
-
 function latest(job: JobSummary): number {
   return Math.max(job.createdAt, job.fundedAt, job.submittedAt);
 }
 
+/** What `finalize` credited the provider: the budget less the platform fee. */
 export function released(job: JobSummary): bigint {
-  const platformFee = (job.budget * BigInt(job.platformFeeBp)) / BPS;
-  const evaluatorFee = (job.budget * BigInt(job.evaluatorFeeBp)) / BPS;
-  const net = job.budget - platformFee - evaluatorFee;
-  return (net * BigInt(job.providerBps)) / BPS;
+  return payout(job);
 }
 
 export function liveStats(snapshot: JobsSnapshot): LiveStats {
@@ -60,5 +57,5 @@ export function matchesQuery(job: JobSummary, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return true;
   if (/^#?\d+$/.test(needle)) return job.id.toString() === needle.replace(/^#/, "");
-  return job.client.toLowerCase().includes(needle) || (job.provider ?? "").toLowerCase().includes(needle);
+  return job.client.toLowerCase().includes(needle) || job.provider.toLowerCase().includes(needle);
 }

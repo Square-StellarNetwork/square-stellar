@@ -1,28 +1,11 @@
 "use client";
 
-import { createSquareClient, type SquareClient, type SquareEvent } from "@squaresdk/core/stellar";
+import { createSquareClient, kernelEvents, type KernelConfig, type SquareClient } from "@squaresdk/core/stellar";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
 import { chainClockOffset, chainNow } from "./clock";
-import {
-  challengeEnd,
-  currentWindow,
-  evaluatorFeeBp,
-  getJobRecord,
-  isDisputed,
-  jobCounter,
-  netPayout,
-  paymentToken,
-  platformFeeBp,
-  settlementHorizon,
-  tokenBalance,
-  totalWithdrawable,
-  treasury,
-  withdrawable,
-  type JobRecord,
-  type KeeperWindow,
-} from "./contracts";
+import { toSummary, type JobSummary } from "./job";
 import { deployment, horizonUrl, NETWORK_ID, rpcUrl, tokenLabel } from "./stellar";
 import { useWallet } from "./wallet";
 
@@ -58,38 +41,17 @@ export function useSquare(): SquareClient | null {
   }, [signer]);
 }
 
-/** A job as the lists show it: its record, its id, and the two window facts. */
-export type JobSummary = JobRecord & {
-  id: bigint;
-  /** When the challenge window closes; 0 when this job has none. */
-  challengeEnd: number;
-  disputed: boolean;
-};
-
 export interface JobsSnapshot {
   counter: bigint;
   jobs: JobSummary[];
   scanned: number;
 }
 
-/** Whether the keeper evaluator holds this job's window, so it has one. */
-export function keeperHoldsTheWindow(record: JobRecord): boolean {
-  return deployment !== null && record.evaluator === deployment.keeperEvaluator;
-}
-
-async function summary(client: SquareClient, id: bigint): Promise<JobSummary> {
-  const record = await getJobRecord(client, id);
-  if (record.status !== "Submitted" || !keeperHoldsTheWindow(record)) {
-    return { ...record, id, challengeEnd: 0, disputed: false };
-  }
-  const [end, disputed] = await Promise.all([challengeEnd(client, id), isDisputed(client, id)]);
-  return { ...record, id, challengeEnd: end, disputed };
-}
-
 /**
- * The newest jobs. Their ids come from the kernel's own `JobCreated` events
+ * The newest jobs. Their ids come from the kernel's own `job_created` events
  * (`getEvents`), which is what the MVP reads instead of an indexer, and each
- * job is then read from the contract.
+ * job is then read from the contract, since an event only says how a job
+ * started.
  */
 export function useJobs(limit = RECENT_JOB_WINDOW) {
   return useQuery({
@@ -99,48 +61,33 @@ export function useJobs(limit = RECENT_JOB_WINDOW) {
     queryFn: async (): Promise<JobsSnapshot> => {
       const client = readOnly;
       if (client === null) throw new Error("no deployment");
-      const [counter, ids] = await Promise.all([jobCounter(client), createdJobIds(client, limit)]);
-      const jobs = await Promise.all(ids.map((id) => summary(client, id)));
+      const [counter, ids] = await Promise.all([client.jobCounter(), createdJobIds(client, limit)]);
+      const jobs = await Promise.all(ids.map(async (id) => toSummary(await client.getJob(id))));
       return { counter, jobs, scanned: ids.length };
     },
   });
 }
 
-/** The job ids the kernel's `JobCreated` events carry, newest first. */
+/** The job ids the kernel's `job_created` events carry, newest first. */
 async function createdJobIds(client: SquareClient, limit: number): Promise<bigint[]> {
   const latest = await client.latestLedger();
   const startLedger = Math.max(1, deployment?.deployLedger ?? latest - EVENT_LOOKBACK_LEDGERS);
-  const response = await client.server.getEvents({
-    startLedger,
-    filters: [{ type: "contract", contractIds: [client.resolve("square_job").id], topics: [["*", "*"]] }],
-    limit: 1000,
-  });
-  const ids = client
-    .decodeEvents(response)
-    .filter((event: SquareEvent) => event.name === "job_created")
-    .map((event: SquareEvent) => event.topics[1])
-    .filter((id): id is bigint => typeof id === "bigint");
+  const page = await client.getEvents({ startLedger, topics: [[{ symbol: "job_created" }]], limit: 1_000 });
+  const ids = kernelEvents(page.events).flatMap((event) => (event.name === "job_created" ? [event.jobId] : []));
   return [...new Set(ids)].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0)).slice(0, limit);
 }
-
-export type JobDetail = JobSummary & {
-  /** What `complete` would credit the payee side, at the job's snapshotted fees. */
-  netPayout: bigint;
-};
 
 export function useJob(id: bigint | null) {
   return useQuery({
     queryKey: ["job", NETWORK_ID, id === null ? null : id.toString()],
     enabled: readOnly !== null && id !== null,
     refetchInterval: POLL_MS,
-    queryFn: async (): Promise<JobDetail | null> => {
+    queryFn: async (): Promise<JobSummary | null> => {
       const client = readOnly;
       if (client === null || id === null) return null;
-      const counter = await jobCounter(client);
+      const counter = await client.jobCounter();
       if (id < 1n || id > counter) return null;
-      const base = await summary(client, id);
-      const net = await netPayout(client, id);
-      return { ...base, netPayout: net };
+      return toSummary(await client.getJob(id));
     },
   });
 }
@@ -150,13 +97,9 @@ export interface NetworkInfo {
   protocolVersion: number;
   chainOffset: number;
   jobCounter: bigint;
-  settlementHorizon: number;
-  window: KeeperWindow;
-  platformFeeBp: number;
-  evaluatorFeeBp: number;
-  treasury: string;
-  totalWithdrawable: bigint;
-  paymentToken: string;
+  config: KernelConfig;
+  owner: string;
+  totals: { escrowed: bigint; withdrawable: bigint; unaccounted: bigint };
 }
 
 /**
@@ -173,29 +116,21 @@ export function useNetwork() {
       const client = readOnly;
       if (client === null) throw new Error("no deployment");
       const head = await client.server.getLatestLedger();
-      const [closedAt, counter, horizon, window, platform, evaluator, treasuryAddress, withdrawableTotal, token] = await Promise.all([
+      const [closedAt, counter, config, owner, totals] = await Promise.all([
         ledgerClosedAt(client, head.sequence),
-        jobCounter(client),
-        settlementHorizon(client),
-        currentWindow(client),
-        platformFeeBp(client),
-        evaluatorFeeBp(client),
-        treasury(client),
-        totalWithdrawable(client),
-        paymentToken(client),
+        client.jobCounter(),
+        client.kernelConfig(),
+        client.kernelOwner(),
+        client.kernelTotals(),
       ]);
       return {
         ledger: head.sequence,
         protocolVersion: Number(head.protocolVersion),
         chainOffset: chainClockOffset(closedAt, Date.now()),
         jobCounter: counter,
-        settlementHorizon: horizon,
-        window,
-        platformFeeBp: platform,
-        evaluatorFeeBp: evaluator,
-        treasury: treasuryAddress,
-        totalWithdrawable: withdrawableTotal,
-        paymentToken: token,
+        config,
+        owner,
+        totals,
       };
     },
   });
@@ -226,11 +161,7 @@ export function usePositions(account: string | undefined) {
     queryFn: async (): Promise<Positions> => {
       const client = readOnly;
       if (client === null || account === undefined) throw new Error("no deployment or no account");
-      const [owed, xlm, token] = await Promise.all([
-        withdrawable(client, account),
-        nativeBalance(account),
-        paymentToken(client).then((id) => tokenBalance(client, id, account)),
-      ]);
+      const [owed, xlm, token] = await Promise.all([client.withdrawable(account), nativeBalance(account), client.tokenBalance(account)]);
       return { withdrawable: owed, xlm, token };
     },
   });
@@ -249,7 +180,7 @@ export async function nativeBalance(account: string): Promise<bigint> {
 
 /** What the kernel's payment token is called, for every amount on screen. */
 export function usePaymentTokenLabel(): string {
-  return tokenLabel(useNetwork().data?.paymentToken);
+  return tokenLabel(useNetwork().data?.config.token);
 }
 
 export function useNow(intervalMs = 1000): number {
@@ -266,5 +197,6 @@ export function useClockSkew(): number {
   return useNetwork().data?.chainOffset ?? 0;
 }
 
-export { jobPhase, LISTING_LABELS, PHASE_LABELS } from "./phase";
+export type { JobSummary } from "./job";
+export { jobPhase, PHASE_LABELS } from "./phase";
 export type { JobPhase } from "./phase";

@@ -11,14 +11,14 @@ The reference web application for Square, the settlement protocol for autonomous
 
 ## What it does
 
-The testnet MVP is one flow — connect a wallet, open a job, fund it, deliver, finalize or dispute, withdraw — and every screen in it reads the chain directly.
+The testnet MVP is one flow — connect a wallet, open a job, fund it, deliver, and then either the client rejects inside the challenge window or anyone finalizes after it, and the credited side withdraws. Every screen reads the chain directly.
 
 | Route | Purpose |
 |---|---|
 | `/` | Landing page with live numbers (jobs opened, escrow held, settled, last activity), the settlement layers, the lifecycle and a live network strip. |
-| `/dashboard` | Metric tiles, the escrow flow, pipeline and settlement charts, a jobs table with phase filters, a search by id or address and a button that reads 50 older jobs at a time, and, with a wallet connected, the wallet's XLM balance and its withdrawable credit on `square_job` with a Withdraw button, plus an inbox of the jobs waiting on that wallet: deliverable to submit before the expiry less the job's settlement horizon, escrow to fund, budget to agree, challenge window open, ready to finalize, refund available. |
-| `/job?id=N` | The full job record, the settlement clock built from its timestamps, the parties, how the budget divides, and every lifecycle action the connected wallet may take: set provider, set budget, fund, submit, dispute, finalize, reject, claim refund, withdraw. A deliverable or dispute note is hashed in the browser with SHA-256, so only the digest reaches the chain. |
-| `/new` | Create a job: provider, expiry (at least twice the settlement horizon away, so the job is still submittable after it is funded), a description of at most 256 bytes, and an optional budget set right after creation. The evaluator and hook come from the deployment record. |
+| `/dashboard` | Metric tiles, the escrow flow, pipeline and settlement charts, a jobs table with phase filters, a search by id or address and a button that reads 50 older jobs at a time, and, with a wallet connected, the wallet's XLM balance and its withdrawable credit on `square_job` with a Withdraw button, plus an inbox of the jobs waiting on that wallet: deliverable to submit before the job expires, escrow to fund, budget to agree, challenge window open, ready to finalize, refund available. |
+| `/job?id=N` | The full job record, the settlement clock built from its timestamps, the two parties, how the budget divides, and every lifecycle action the connected wallet may take: set budget, fund, submit, reject, finalize, claim refund, withdraw. The deliverable is hashed in the browser with SHA-256 so only the digest reaches the chain; a rejection's reason is text the kernel stores, capped at its `MAX_TEXT` of 256 bytes, and the form says so. |
+| `/new` | Create a job: provider, expiry (at least two challenge windows away, so the provider can still submit and the window can still run), a description of at most 256 bytes, and an optional budget set right after creation. |
 | `/agents`, `/policy`, `/network` | Phase 2. Each page says what it will hold and which issue brings it, rather than showing figures the MVP cannot read. |
 
 Static export means there are no dynamic route segments, so the job page reads its id from the query string. All data is fetched on the client with React Query and refreshed every ten seconds.
@@ -34,12 +34,12 @@ Every chart is computed from the job records the page already reads; nothing is 
 | Where | Chart | Data | Library |
 |---|---|---|---|
 | Dashboard | Escrow flow: funded per hour or day as thin rounded bars, running totals funded and submitted as smooth lines | `funded_at`, `submitted_at` and `budget` of the most recent job records | Recharts |
-| Dashboard | Pipeline by phase: budget held per phase with the job count on top | phase derived from status, challenge window and dispute flag | Recharts |
-| Dashboard | Settled on recent jobs: paid to payees, platform fees, evaluator fees, refunded to clients | terminal job records, their snapshotted fees and the provider share the settlement decided | Recharts |
+| Dashboard | Pipeline by phase: budget held per phase with the job count on top | phase derived from the status, the expiry and the challenge window | Recharts |
+| Dashboard | Settled on recent jobs: paid to providers, platform fees, refunded to clients | terminal job records and the basis points each carries | Recharts |
 | Job | Settlement clock: the job's phases laid out in time with the live one outlined and a marker for now | record timestamps and `challenge_end` | SVG |
-| Job | Payout split: net payout, client share after a decision, platform and evaluator fees | the fee basis points the record carries, `net_payout`, `provider_bps` | SVG |
+| Job | Payout split: what finalize would credit the provider, against the platform fee | the budget and `platform_fee_bps` on the record | SVG |
 
-Paid to payees is the provider share of the net that each completed job settled at, so a job decided at a split contributes only that share; the rest of its net is credited back to the client by `square_job`'s `complete` and is counted as refunded, next to the budgets of rejected jobs. The bucket of the escrow flow is an hour while the records span three days or less and a day after that. The settlement clock scales to the job's own activity; an expiry far beyond it is written under the clock instead of flattening it. Charts are drawn by [Recharts](https://recharts.org) (MIT) on SVG, which is also what the hand-drawn clock and segment bars use, so the whole page shares one rendering model.
+Paid to providers is what `finalize` credited on each completed job: the budget less the platform fee, at that job's own basis points. Refunded is the whole budget of every job that was rejected after funding or expired into `claim_refund`. The bucket of the escrow flow is an hour while the records span three days or less and a day after that. The settlement clock scales to the job's own activity; an expiry far beyond it is written under the clock instead of flattening it. Charts are drawn by [Recharts](https://recharts.org) (MIT) on SVG, which is also what the hand-drawn clock and segment bars use, so the whole page shares one rendering model.
 
 ## Amounts and the payment token
 
@@ -130,7 +130,7 @@ The page is a white engineering blueprint: a bright white canvas, a restrained g
 | `mint` on `mint-wash` | `#33c758` / `#def6e4` | Completed or positive |
 | `amber` | `#ffa600` | In window or pending |
 | `sky` | `#2c78fc` | Open or funded |
-| `magenta` | `#d6409f` | Disputes and rejected |
+| `magenta` | `#d6409f` | Rejected, refundable |
 
 Type scale: caption 12, body 16, subheading 18, heading-sm 24, heading 36, heading-lg 48, display 60 with tight negative tracking. Radii: 8px inputs, 16px cards, 24px table containers, 9999px on every button, chip and pill. Amounts use tabular numbers.
 
@@ -142,9 +142,9 @@ The wallet button offers the SEP-43 wallets Stellar Wallets Kit carries a module
 
 ## Clock
 
-Every time gate on screen comes from the chain, not from the browser. `useNetwork` reads the latest ledger and its close time next to the job counter and keeps the offset between that time and `Date.now()` at the moment of the read; `useNow` still ticks once a second off the local clock and adds that offset, so countdowns move smoothly while the second they name is the ledger's. The dispute and finalize buttons, the refund gate, the dashboard inbox and the settlement clock all derive from it.
+Every time gate on screen comes from the chain, not from the browser. `useNetwork` reads the latest ledger and its close time next to the job counter and keeps the offset between that time and `Date.now()` at the moment of the read; `useNow` still ticks once a second off the local clock and adds that offset, so countdowns move smoothly while the second they name is the ledger's. The reject and finalize buttons, the refund gate, the dashboard inbox and the settlement clock all derive from it.
 
-The size of the windows is the reason. A keeper's challenge window is counted in minutes, not days, so a browser a couple of minutes fast would judge the window closed the instant the provider submitted and would never draw the dispute button at all, on a chain that was still accepting the dispute. The opposite direction is harmless: the SDK simulates every write before sending it, so an action offered too early fails in simulation without spending a fee.
+The size of the window is the reason. The deployed kernel's challenge window is counted in seconds, not days, so a browser a couple of minutes fast would judge it closed the instant the provider submitted and would never draw the reject button at all, on a chain that was still accepting the rejection. The opposite direction is harmless: the SDK simulates every write before sending it, so an action offered too early fails in simulation without spending a fee.
 
 When the two clocks differ by 30 seconds or more, a line above every page names the difference and its direction. The threshold sits well above the few seconds of ledger close time and round trip that separate an accurate machine from the last ledger, and well below the window it exists to protect.
 

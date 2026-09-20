@@ -1,26 +1,23 @@
-import type { JobStatusName } from "./contracts";
+import { refundAvailable, windowClosed } from "./actions";
+import type { JobSummary } from "./job";
 
-export type JobPhase =
-  | "open"
-  | "funded"
-  | "submitted"
-  | "in-window"
-  | "finalizable"
-  | "disputed"
-  | "completed"
-  | "rejected"
-  | "expired";
+export type JobPhase = "open" | "needs-budget" | "funded" | "refundable" | "in-window" | "finalizable" | "completed" | "rejected" | "expired";
 
-export function jobPhase(job: { status: JobStatusName; challengeEnd: number; disputed: boolean }, now: number): JobPhase {
+type Phased = Pick<JobSummary, "status" | "client" | "provider" | "budget" | "expiredAt" | "finalizeAfter">;
+
+/**
+ * Where a job stands, which is its status plus the two clocks the kernel
+ * reads: the expiry a Funded job can be refunded after, and the challenge
+ * window a Submitted job is finalized after.
+ */
+export function jobPhase(job: Phased, now: number): JobPhase {
   switch (job.status) {
     case "Open":
-      return "open";
+      return job.budget === 0n ? "needs-budget" : "open";
     case "Funded":
-      return "funded";
+      return refundAvailable(job, now) ? "refundable" : "funded";
     case "Submitted":
-      if (job.disputed) return "disputed";
-      if (job.challengeEnd > 0 && now >= job.challengeEnd) return "finalizable";
-      return job.challengeEnd > 0 ? "in-window" : "submitted";
+      return windowClosed(job, now) ? "finalizable" : "in-window";
     case "Completed":
       return "completed";
     case "Rejected":
@@ -32,15 +29,12 @@ export function jobPhase(job: { status: JobStatusName; challengeEnd: number; dis
 
 export const PHASE_LABELS: Record<JobPhase, string> = {
   open: "Open",
+  "needs-budget": "Needs a budget",
   funded: "Funded",
-  submitted: "Submitted",
+  refundable: "Refundable",
   "in-window": "In window",
   finalizable: "Finalizable",
-  disputed: "Disputed",
   completed: "Completed",
   rejected: "Rejected",
   expired: "Expired",
 };
-
-/** The claim market is Phase 2 (#39's MVP scope); its labels stay for when it lands. */
-export const LISTING_LABELS: Record<string, string> = { None: "Not listed", Listed: "Listed", Sold: "Sold", Cancelled: "Cancelled" };

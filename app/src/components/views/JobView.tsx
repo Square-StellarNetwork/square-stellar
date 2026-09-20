@@ -15,16 +15,19 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
 import { StatusPill, phaseTone } from "@/components/StatusPill";
 import { WalletButton } from "@/components/WalletButton";
-import { challengeWindowClosed, disputeAvailable, finalizeAvailable, keeperEvaluates, refundAvailable, submitAvailable, submitDeadline } from "@/lib/actions";
+import { budgetAvailable, finalizeAvailable, fundAvailable, refundAvailable, rejectAvailable, submitAvailable, windowClosed } from "@/lib/actions";
 import { addressInputError, readAddressInput } from "@/lib/address";
 import { chartColors, formatCompactAmount, payoutSplit, settlementClock } from "@/lib/charts";
-import { claimRefund, dispute, finalize, fund, reject, setBudget, setProvider, submit, withdrawTo, type JobRecord } from "@/lib/contracts";
 import { formatAmount, formatBps, formatCountdown, formatDuration, formatTimestamp, parseAmount, shortHash } from "@/lib/format";
-import { jobPhase, PHASE_LABELS, useJob, useNow, usePaymentTokenLabel, usePositions, useSquare, type JobDetail } from "@/lib/square";
-import { deployment, isTestnet } from "@/lib/stellar";
+import { platformFee, type JobSummary } from "@/lib/job";
+import { jobPhase, PHASE_LABELS, useJob, useNow, usePaymentTokenLabel, usePositions, useSquare } from "@/lib/square";
+import { isTestnet } from "@/lib/stellar";
 import { describeError, useTx } from "@/lib/tx";
 import { useWallet } from "@/lib/wallet";
 import type { SquareClient, TransactionResult } from "@squaresdk/core/stellar";
+
+/** The kernel's `MAX_TEXT`: the longest description or rejection reason it stores, in bytes. */
+const MAX_TEXT_BYTES = 256;
 
 /** sha256 of what the user typed: a real digest of a real note, computed here. */
 async function digestOf(text: string): Promise<Uint8Array> {
@@ -87,30 +90,6 @@ function ActionCard({
   );
 }
 
-function SetProviderAction({ ctx }: { ctx: ActionContext }) {
-  const [value, setValue] = useState("");
-  const parsed = readAddressInput(value);
-  const provider = parsed.kind === "valid" ? parsed.address : null;
-  return (
-    <ActionCard
-      title="Name the provider"
-      description="The job was opened without one. Only the client can name it, and only while the job is Open."
-      buttonLabel="Set provider"
-      disabled={provider === null}
-      ctx={ctx}
-      onClick={() => {
-        const { square, address } = ctx;
-        if (square === null || address === null || provider === null) return;
-        void ctx.run("Set provider", () => setProvider(square, address, ctx.id, provider));
-      }}
-    >
-      <Field label="Provider" htmlFor="set-provider" error={addressInputError(parsed)}>
-        <input id="set-provider" className={inputClass} value={value} onChange={(event) => setValue(event.target.value)} placeholder="GA…" spellCheck={false} />
-      </Field>
-    </ActionCard>
-  );
-}
-
 function SetBudgetAction({ ctx, token, current }: { ctx: ActionContext; token: string; current: bigint }) {
   const [value, setValue] = useState("");
   const amount = value.trim().length === 0 ? null : parseAmount(value);
@@ -129,7 +108,7 @@ function SetBudgetAction({ ctx, token, current }: { ctx: ActionContext; token: s
       onClick={() => {
         const { square, address } = ctx;
         if (square === null || address === null || amount === null) return;
-        void ctx.run("Set budget", () => setBudget(square, address, ctx.id, amount));
+        void ctx.run("Set budget", () => square.setBudget(ctx.id, amount));
       }}
     >
       <Field label={`Budget (${token})`} htmlFor="set-budget" error={value.trim().length > 0 && amount === null ? "Enter an amount with up to seven decimals." : null}>
@@ -164,7 +143,7 @@ function FundAction({ ctx, token, budget, balance }: { ctx: ActionContext; token
       onClick={() => {
         const { square, address } = ctx;
         if (square === null || address === null) return;
-        void ctx.run("Fund", () => fund(square, address, ctx.id, budget));
+        void ctx.run("Fund", () => square.fund(ctx.id, budget));
       }}
     />
   );
@@ -193,7 +172,7 @@ function SubmitAction({ ctx, deadline, now }: { ctx: ActionContext; deadline: nu
       onClick={() => {
         const { square, address } = ctx;
         if (square === null || address === null || digest === null) return;
-        void ctx.run("Submit", () => submit(square, address, ctx.id, digest, { agentId: agentError === null && agentId !== null ? agentId : null, requestHash: null }));
+        void ctx.run("Submit", () => square.submit(ctx.id, digest));
       }}
     >
       <Field
@@ -226,10 +205,12 @@ function NoteAction({
   buttonLabel: string;
   label: string;
   placeholder: string;
-  send: (square: SquareClient, address: string, note: Uint8Array) => Promise<TransactionResult>;
+  send: (square: SquareClient, note: string) => Promise<TransactionResult>;
 }) {
   const [note, setNote] = useState("");
-  const ready = note.trim().length > 0;
+  const used = new TextEncoder().encode(note.trim()).length;
+  const tooLong = used > MAX_TEXT_BYTES;
+  const ready = note.trim().length > 0 && !tooLong;
   return (
     <ActionCard
       title={title}
@@ -238,12 +219,17 @@ function NoteAction({
       disabled={!ready}
       ctx={ctx}
       onClick={() => {
-        const { square, address } = ctx;
-        if (square === null || address === null || !ready) return;
-        void ctx.run(label, async () => send(square, address, await digestOf(note.trim())));
+        const { square } = ctx;
+        if (square === null || !ready) return;
+        void ctx.run(label, () => send(square, note.trim()));
       }}
     >
-      <Field label="Reason" htmlFor={`${label}-note`} hint="Only its sha256 goes on chain; keep the text if you need to show it later.">
+      <Field
+        label="Reason"
+        htmlFor={`${label}-note`}
+        hint={`The text itself is stored on the job, so keep it short and free of anything private. ${used}/${MAX_TEXT_BYTES} bytes.`}
+        error={tooLong ? `The kernel refuses a reason over ${MAX_TEXT_BYTES} bytes (TextTooLong).` : null}
+      >
         <textarea id={`${label}-note`} className={`${inputClass} min-h-20`} value={note} onChange={(event) => setNote(event.target.value)} placeholder={placeholder} />
       </Field>
     </ActionCard>
@@ -259,61 +245,35 @@ function Row({ label, children, muted = false }: { label: string; children: Reac
   );
 }
 
-function Actions({ detail, ctx, token, now, balance }: { detail: JobDetail; ctx: ActionContext; token: string; now: number; balance: bigint | undefined }) {
-  const keeper = deployment?.keeperEvaluator ?? "";
+function Actions({ detail, ctx, token, now, balance }: { detail: JobSummary; ctx: ActionContext; token: string; now: number; balance: bigint | undefined }) {
   const { address } = ctx;
-  const isClient = address !== null && address === detail.client;
-  const isProvider = address !== null && address === detail.provider;
-  const isEvaluator = address !== null && address === detail.evaluator;
   const cards: ReactNode[] = [];
 
-  if (isClient && detail.status === "Open" && detail.provider === null) cards.push(<SetProviderAction key="provider" ctx={ctx} />);
-  if ((isClient || isProvider) && detail.status === "Open") cards.push(<SetBudgetAction key="budget" ctx={ctx} token={token} current={detail.budget} />);
-  if (isClient && detail.status === "Open" && detail.provider !== null && detail.budget > 0n) {
-    cards.push(<FundAction key="fund" ctx={ctx} token={token} budget={detail.budget} balance={balance} />);
-  }
-  if (isProvider && submitAvailable(detail, now)) cards.push(<SubmitAction key="submit" ctx={ctx} deadline={submitDeadline(detail)} now={now} />);
-  if (isClient && disputeAvailable(detail, keeper, now)) {
-    cards.push(
-      <NoteAction
-        key="dispute"
-        ctx={ctx}
-        title="Dispute the submission"
-        description={
-          <>
-            <span>The challenge window is open until {formatTimestamp(detail.challengeEnd)}. A dispute stops the finalize and puts the decision to the arbiters.</span>
-            <span>It pulls a bond from this wallet in the same signature; the bond returns if the dispute is upheld or lapses.</span>
-          </>
-        }
-        buttonLabel="Dispute"
-        label="Dispute"
-        placeholder="What is wrong with the deliverable"
-        send={(square, address, note) => dispute(square, address, ctx.id, note)}
-      />,
-    );
-  }
-  if (finalizeAvailable(detail, keeper, now)) {
+  if (budgetAvailable(detail, address)) cards.push(<SetBudgetAction key="budget" ctx={ctx} token={token} current={detail.budget} />);
+  if (fundAvailable(detail, address, now)) cards.push(<FundAction key="fund" ctx={ctx} token={token} budget={detail.budget} balance={balance} />);
+  if (submitAvailable(detail, address, now)) cards.push(<SubmitAction key="submit" ctx={ctx} deadline={detail.expiredAt} now={now} />);
+  if (finalizeAvailable(detail, now)) {
     cards.push(
       <ActionCard
         key="finalize"
         title="Finalize"
         description={
           <>
-            <span>The challenge window closed and nobody disputed. Anyone may finalize; the payee is credited and the caller takes the evaluator fee.</span>
-            <span>The keeper evaluator does this on its own too; this button is the same call.</span>
+            <span>The challenge window closed and the client did not reject. The provider is credited the budget less the platform fee, and the fee goes to the kernel&apos;s owner.</span>
+            <span>Anyone may send this call — it names nobody — so the provider never depends on the client acting.</span>
           </>
         }
         buttonLabel="Finalize"
         ctx={ctx}
         onClick={() => {
-          const { square, address } = ctx;
-          if (square === null || address === null) return;
-          void ctx.run("Finalize", () => finalize(square, address, ctx.id));
+          const { square } = ctx;
+          if (square === null) return;
+          void ctx.run("Finalize", () => square.finalize(ctx.id));
         }}
       />,
     );
   }
-  if ((isEvaluator && (detail.status === "Funded" || detail.status === "Submitted")) || (isClient && detail.status === "Open")) {
+  if (rejectAvailable(detail, address, now)) {
     cards.push(
       <NoteAction
         key="reject"
@@ -321,28 +281,30 @@ function Actions({ detail, ctx, token, now, balance }: { detail: JobDetail; ctx:
         title="Reject"
         description={
           detail.status === "Open"
-            ? "The job has not been funded. Rejecting closes it."
-            : "You are the evaluator on this job. Rejecting refunds the client the whole escrow."
+            ? "Nothing is escrowed yet. Rejecting closes the job."
+            : detail.status === "Funded"
+              ? "Rejecting closes the job and credits the whole budget back to you, to be withdrawn."
+              : `The window is open until ${formatTimestamp(detail.finalizeAfter)}. Rejecting inside it takes the whole budget back; after it, only finalize is left.`
         }
         buttonLabel="Reject"
-        label="Reject"
+        label="Reason"
         placeholder="Why the work is refused"
-        send={(square, address, note) => reject(square, address, ctx.id, note)}
+        send={(square, note) => square.reject(ctx.id, note)}
       />,
     );
   }
-  if (refundAvailable(detail, keeper, now)) {
+  if (refundAvailable(detail, now)) {
     cards.push(
       <ActionCard
         key="refund"
         title="Claim the refund"
-        description="The expiry passed with nothing settled and no optimistic evaluator holding the job. Anyone may crank it; the escrow is credited back to the client."
+        description="The job expired without a submission. Anyone may crank this; the budget is credited back to the client, who withdraws it."
         buttonLabel="Claim refund"
         ctx={ctx}
         onClick={() => {
           const { square } = ctx;
           if (square === null) return;
-          void ctx.run("Claim refund", () => claimRefund(square, ctx.id));
+          void ctx.run("Claim refund", () => square.claimRefund(ctx.id));
         }}
       />,
     );
@@ -373,7 +335,7 @@ function Withdrawable({ ctx, token }: { ctx: ActionContext; token: string }) {
       onClick={() => {
         const { square, address } = ctx;
         if (square === null || address === null) return;
-        void ctx.run("Withdraw", () => withdrawTo(square, address, address, owed));
+        void ctx.run("Withdraw", () => square.withdrawTo(address, owed));
       }}
     />
   );
@@ -385,25 +347,22 @@ function Withdrawable({ ctx, token }: { ctx: ActionContext; token: string }) {
  * snapshotted on the job, and after a decision the net is split at the share
  * the settlement decided.
  */
-function PayoutPanel({ detail, token }: { detail: JobDetail; token: string }) {
-  const split = payoutSplit(detail, detail.netPayout);
-  const decided = detail.status === "Completed";
+function PayoutPanel({ detail, token }: { detail: JobSummary; token: string }) {
+  const split = payoutSplit(detail);
   const amount = (value: number) => `${formatCompactAmount(value)} ${token}`;
   const segments: Segment[] = [
-    { key: "provider", label: decided && split.providerBps < 10_000 ? "To the payee" : "Net payout", value: split.providerShare, color: chartColors.lavender, display: amount(split.providerShare) },
-    ...(split.clientShare > 0 ? [{ key: "client", label: "Back to the client", value: split.clientShare, color: chartColors.magenta, display: amount(split.clientShare) }] : []),
-    { key: "platform", label: `Platform ${formatBps(detail.platformFeeBp)}`, value: split.platformFee, color: chartColors.carbon, display: amount(split.platformFee) },
-    { key: "evaluator", label: `Evaluator ${formatBps(detail.evaluatorFeeBp)}`, value: split.evaluatorFee, color: chartColors.amber, display: amount(split.evaluatorFee) },
+    { key: "provider", label: "To the provider", value: split.payout, color: chartColors.lavender, display: amount(split.payout) },
+    { key: "platform", label: `Platform fee ${formatBps(detail.platformFeeBps)}`, value: split.platformFee, color: chartColors.carbon, display: amount(split.platformFee) },
   ];
   return (
     <PanelCard
       title="Payout split"
       description={
-        detail.fundedAt === 0
-          ? "Not funded yet, so these are the parameters the kernel would snapshot, not a commitment."
-          : decided
-            ? `Settled at ${formatBps(split.providerBps)} to the payee; the rest of the net was credited back to the client.`
-            : "The fees are fixed at funding, so the net payout is already known."
+        detail.status === "Completed"
+          ? "Settled. The provider was credited the budget less the fee, and the fee went to the kernel's owner."
+          : detail.status === "Rejected" || detail.status === "Expired"
+            ? "Closed without a payout: the whole budget was credited back to the client."
+            : "The basis points are the job's own, so the payout is known before the window closes."
       }
     >
       <SegmentBar segments={segments} total={split.budget} ariaLabel={`How the ${amount(split.budget)} budget of job ${detail.id.toString()} divides`} />
@@ -411,21 +370,19 @@ function PayoutPanel({ detail, token }: { detail: JobDetail; token: string }) {
   );
 }
 
-function Facts({ detail, token }: { detail: JobRecord & { id: bigint; netPayout: bigint; challengeEnd: number }; token: string }) {
+function Facts({ detail, token }: { detail: JobSummary; token: string }) {
+  const fee = platformFee(detail);
   return (
     <PanelCard title="The record" description="What the kernel stores for this job.">
       <dl className="flex flex-col">
         <Row label="Budget">
           <Amount value={detail.budget} />
         </Row>
-        <Row label={`Platform fee ${formatBps(detail.platformFeeBp)}`} muted={detail.fundedAt === 0}>
-          <Amount value={(detail.budget * BigInt(detail.platformFeeBp)) / 10_000n} />
+        <Row label={`Platform fee ${formatBps(detail.platformFeeBps)}`}>
+          <Amount value={fee} />
         </Row>
-        <Row label={`Evaluator fee ${formatBps(detail.evaluatorFeeBp)}`} muted={detail.fundedAt === 0}>
-          <Amount value={(detail.budget * BigInt(detail.evaluatorFeeBp)) / 10_000n} />
-        </Row>
-        <Row label="Net payout">
-          <Amount value={detail.netPayout} />
+        <Row label="Payout on finalize">
+          <Amount value={detail.budget - fee} />
         </Row>
         <Row label="Created">{formatTimestamp(detail.createdAt)}</Row>
         <Row label="Funded" muted={detail.fundedAt === 0}>
@@ -435,15 +392,15 @@ function Facts({ detail, token }: { detail: JobRecord & { id: bigint; netPayout:
           {detail.submittedAt === 0 ? "Not submitted" : formatTimestamp(detail.submittedAt)}
         </Row>
         <Row label="Expires">{formatTimestamp(detail.expiredAt)}</Row>
-        <Row label="Settlement horizon">{formatDuration(detail.settlementHorizon)}</Row>
-        <Row label="Deliverable" muted={detail.submittedAt === 0}>
-          {detail.submittedAt === 0 ? "Not submitted" : <span title={detail.deliverable}>{shortHash(detail.deliverable)}</span>}
+        <Row label="Challenge window">{formatDuration(detail.challengeWindow)}</Row>
+        <Row label="Finalize after" muted={detail.finalizeAfter === 0}>
+          {detail.finalizeAfter === 0 ? "Not submitted" : formatTimestamp(detail.finalizeAfter)}
         </Row>
-        <Row label="Evaluator">
-          <AddressLink address={detail.evaluator} />
+        <Row label="Deliverable" muted={detail.deliverable === null}>
+          {detail.deliverable === null ? "Not submitted" : <span title={hexOf(detail.deliverable)}>{shortHash(hexOf(detail.deliverable))}</span>}
         </Row>
-        <Row label="Hook" muted={detail.hook === null}>
-          {detail.hook === null ? "None" : <AddressLink address={detail.hook} />}
+        <Row label="Provider">
+          <AddressLink address={detail.provider} />
         </Row>
         <Row label="Paid in">{token}</Row>
       </dl>
@@ -507,15 +464,12 @@ export function JobView() {
 
   const phase = jobPhase(detail, now);
   const ctx: ActionContext = { id, square, address, busy, run };
-  const keeper = deployment?.keeperEvaluator ?? "";
   const clock = settlementClock({
     createdAt: detail.createdAt,
     fundedAt: detail.fundedAt,
     submittedAt: detail.submittedAt,
     expiredAt: detail.expiredAt,
-    challengeEnd: detail.challengeEnd,
-    disputedAt: 0,
-    resolveBy: 0,
+    finalizeAfter: detail.finalizeAfter,
     status: detail.status,
     now,
   });
@@ -533,15 +487,13 @@ export function JobView() {
         }
       />
 
-      {detail.status === "Submitted" && keeperEvaluates(detail, keeper) ? (
+      {detail.status === "Submitted" ? (
         <PanelCard
-          title={detail.disputed ? "Disputed" : challengeWindowClosed(detail.challengeEnd, now) ? "The window has closed" : "In the challenge window"}
+          title={windowClosed(detail, now) ? "The window has closed" : "In the challenge window"}
           description={
-            detail.disputed
-              ? "A dispute is open, so the keeper cannot finalize. The arbiters decide."
-              : detail.challengeEnd === 0
-                ? "This job has no window: its evaluator is not the keeper."
-                : `${formatCountdown(detail.challengeEnd, now)} — ${formatTimestamp(detail.challengeEnd)}`
+            windowClosed(detail, now)
+              ? "The client did not reject in time. Anyone may finalize now, and the provider is credited."
+              : `${formatCountdown(detail.finalizeAfter, now)} — the client may still reject until ${formatTimestamp(detail.finalizeAfter)}`
           }
         >
           <SettlementClock clock={clock} />
@@ -554,7 +506,7 @@ export function JobView() {
           <Withdrawable ctx={ctx} token={token} />
         </div>
         <div className="flex flex-col gap-4">
-          <PartiesPanel client={detail.client} provider={detail.provider} payee={detail.payee} submitted={detail.submittedAt > 0} />
+          <PartiesPanel client={detail.client} provider={detail.provider} />
           <PayoutPanel detail={detail} token={token} />
           <Facts detail={detail} token={token} />
         </div>

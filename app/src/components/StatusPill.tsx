@@ -12,18 +12,15 @@ const tones: Record<Tone, { pill: string; dot: string }> = {
 
 export const phaseTone: Record<JobPhase, Tone> = {
   open: "sky",
+  "needs-budget": "neutral",
   funded: "sky",
-  submitted: "amber",
+  refundable: "magenta",
   "in-window": "amber",
   finalizable: "amber",
-  disputed: "magenta",
   completed: "mint",
   rejected: "magenta",
   expired: "neutral",
 };
-
-export const listingTone: Record<number, Tone> = { 0: "neutral", 1: "sky", 2: "mint", 3: "neutral" };
-export const outcomeTone: Record<number, Tone> = { 0: "amber", 1: "mint", 2: "magenta", 3: "neutral" };
 
 export function StatusPill({ label, tone, className = "" }: { label: string; tone: Tone; className?: string }) {
   const look = tones[tone];

@@ -1,4 +1,3 @@
-import { Keypair } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import {
   bucketSize,
@@ -13,41 +12,7 @@ import {
   settlementClock,
 } from "./charts";
 import { PHASE_LABELS } from "./phase";
-import type { JobSummary } from "./square";
-
-// Real Stellar accounts: a strkey's checksum makes an invented one a lie.
-const CLIENT = Keypair.random().publicKey();
-const PROVIDER = Keypair.random().publicKey();
-const EVALUATOR = Keypair.random().publicKey();
-
-/** Stellar amounts carry seven decimals, so one whole token is 10_000_000. */
-const ONE = 10_000_000n;
-
-const job = (over: Partial<JobSummary>): JobSummary => ({
-  id: 1n,
-  client: CLIENT,
-  provider: PROVIDER,
-  evaluator: EVALUATOR,
-  budget: ONE,
-  status: "Open" as const,
-  createdAt: 1_000,
-  fundedAt: 0,
-  expiredAt: 100_000,
-  submittedAt: 0,
-  challengeEnd: 0,
-  disputed: false,
-  platformFeeBp: 100,
-  evaluatorFeeBp: 50,
-  providerBps: 0,
-  settlementHorizon: 0,
-  hook: null,
-  hookResolvesPayout: false,
-  payee: null,
-  deliverable: `0x${"00".repeat(32)}`,
-  description: "A job the tests build",
-  commitmentAtFund: null,
-  ...over,
-});
+import { funded, job, ONE, submitted } from "./testJob";
 
 describe("escrow flow", () => {
   it("buckets by the hour under three days and by the day beyond", () => {
@@ -57,8 +22,8 @@ describe("escrow flow", () => {
 
   it("sums funded and submitted budgets per bucket and runs the totals", () => {
     const series = escrowFlow([
-      job({ id: 1n, budget: 2n * ONE, fundedAt: 3_600, submittedAt: 3_700 }),
-      job({ id: 2n, budget: ONE, fundedAt: 7_300 }),
+      funded({ id: 1n, budget: 2n * ONE, fundedAt: 3_600, status: "Submitted", submittedAt: 3_700 }),
+      funded({ id: 2n, budget: ONE, fundedAt: 7_300 }),
       job({ id: 3n, budget: 5n * ONE }),
     ]);
     expect(series.bucket).toBe(HOUR);
@@ -81,7 +46,7 @@ describe("phase breakdown", () => {
       [
         job({ id: 1n, status: "Completed" as const, budget: 3n * ONE }),
         job({ id: 2n, status: "Completed" as const, budget: ONE }),
-        job({ id: 3n, status: "Submitted" as const, challengeEnd: 500, submittedAt: 400 }),
+        submitted(400, { id: 3n, challengeWindow: 100 }),
       ],
       1_000,
       PHASE_LABELS,
@@ -94,65 +59,54 @@ describe("phase breakdown", () => {
 });
 
 describe("payout split", () => {
-  it("applies the snapshotted basis points and a decided provider share", () => {
-    const split = payoutSplit({ budget: ONE, platformFeeBp: 100, evaluatorFeeBp: 50, providerBps: 4_000, status: "Completed" as const }, 9_850_000n);
-    expect(split.platformFee).toBeCloseTo(0.01);
-    expect(split.evaluatorFee).toBeCloseTo(0.005);
-    expect(split.net).toBeCloseTo(0.985);
-    expect(split.providerShare).toBeCloseTo(0.394);
-    expect(split.clientShare).toBeCloseTo(0.591);
+  it("is the kernel's own arithmetic: the budget less the truncated fee", () => {
+    const split = payoutSplit({ budget: ONE, platformFeeBps: 250 });
+    expect(split.budget).toBeCloseTo(1);
+    expect(split.platformFee).toBeCloseTo(0.025);
+    expect(split.payout).toBeCloseTo(0.975);
   });
 
-  it("gives the provider everything while no decision exists", () => {
-    const split = payoutSplit({ budget: ONE, platformFeeBp: 100, evaluatorFeeBp: 50, providerBps: 0, status: "Submitted" as const }, 0n);
-    expect(split.providerBps).toBe(10_000);
-    expect(split.clientShare).toBe(0);
-    expect(split.net).toBeCloseTo(0.985);
-  });
-
-  it("keeps a decided zero share at zero instead of reading it as a full payout", () => {
-    const split = payoutSplit({ budget: ONE, platformFeeBp: 100, evaluatorFeeBp: 50, providerBps: 0, status: "Completed" as const }, 9_850_000n);
-    expect(split.providerBps).toBe(0);
-    expect(split.providerShare).toBe(0);
-    expect(split.clientShare).toBeCloseTo(0.985);
+  it("gives the whole budget to the provider when the deployment charges nothing", () => {
+    expect(payoutSplit({ budget: ONE, platformFeeBps: 0 })).toEqual({ budget: 1, platformFee: 0, payout: 1 });
   });
 });
 
 describe("fee totals", () => {
-  it("adds fees on completed jobs and refunds on rejected funded jobs", () => {
+  it("adds the fee and the payout on a completed job", () => {
+    const totals = feeTotals([job({ id: 1n, status: "Completed", budget: 2n * ONE, platformFeeBps: 250 })]);
+    expect(totals.platform).toBeCloseTo(0.05);
+    expect(totals.netPaid).toBeCloseTo(1.95);
+    expect(totals.completed).toBe(1);
+  });
+
+  it("counts a rejection as refunded only when something was escrowed", () => {
     const totals = feeTotals([
-      job({ id: 1n, status: "Completed" as const, budget: 2n * ONE, providerBps: 10_000 }),
-      job({ id: 2n, status: "Rejected" as const, budget: ONE, fundedAt: 5 }),
-      job({ id: 3n, status: "Rejected" as const, budget: ONE }),
+      job({ id: 1n, status: "Rejected", budget: ONE, fundedAt: 5 }),
+      job({ id: 2n, status: "Rejected", budget: ONE }),
     ]);
-    expect(totals).toEqual({ platform: 0.02, evaluator: 0.01, netPaid: 1.97, refunded: 1, splitToClient: 0, completed: 1, rejected: 1 });
+    expect(totals.refunded).toBeCloseTo(1);
+    expect(totals.rejected).toBe(1);
   });
 
-  it("splits the net of a decided job between the payee and the client, as SquareJob.complete does", () => {
-    const totals = feeTotals([job({ id: 1n, status: "Completed" as const, budget: ONE, providerBps: 4_000 })]);
-    expect(totals).toEqual({ platform: 0.01, evaluator: 0.005, netPaid: 0.394, refunded: 0.591, splitToClient: 0.591, completed: 1, rejected: 0 });
-  });
-
-  it("counts nothing as paid to the payee when a completed job was decided at a zero provider share", () => {
-    const totals = feeTotals([job({ id: 1n, status: "Completed" as const, budget: ONE, providerBps: 0 })]);
+  it("counts an expired job's budget as refunded, because claim_refund credits it back", () => {
+    const totals = feeTotals([job({ id: 1n, status: "Expired", budget: 3n * ONE, fundedAt: 5 })]);
+    expect(totals.refunded).toBeCloseTo(3);
+    expect(totals.refundedJobs).toBe(1);
     expect(totals.netPaid).toBe(0);
-    expect(totals.refunded).toBe(0.985);
-    expect(totals.splitToClient).toBe(0.985);
   });
 
-  it("keeps the whole net accounted for on every completed job", () => {
-    const totals = feeTotals([
-      job({ id: 1n, status: "Completed" as const, budget: ONE, providerBps: 4_000 }),
-      job({ id: 2n, status: "Completed" as const, budget: 2n * ONE, providerBps: 10_000 }),
-      job({ id: 3n, status: "Rejected" as const, budget: ONE, fundedAt: 5 }),
-    ]);
-    expect(totals.netPaid + totals.splitToClient).toBeCloseTo(0.985 + 1.97);
-    expect(totals.refunded).toBeCloseTo(totals.splitToClient + 1);
+  it("keeps every completed budget accounted for between the payout and the fee", () => {
+    const jobs = [
+      job({ id: 1n, status: "Completed", budget: ONE, platformFeeBps: 250 }),
+      job({ id: 2n, status: "Completed", budget: 2n * ONE, platformFeeBps: 250 }),
+    ];
+    const totals = feeTotals(jobs);
+    expect(totals.netPaid + totals.platform).toBeCloseTo(3);
   });
 });
 
 describe("settlement clock", () => {
-  const base = { createdAt: 1_000, fundedAt: 1_010, submittedAt: 1_011, expiredAt: 1_000 + 30 * DAY, challengeEnd: 1_131, disputedAt: 0, resolveBy: 0, status: "Submitted" as const };
+  const base = { createdAt: 1_000, fundedAt: 1_010, submittedAt: 1_011, expiredAt: 1_000 + 30 * DAY, finalizeAfter: 1_131, status: "Submitted" as const };
 
   it("keeps a far expiry off the scale and names the live segment", () => {
     const clock = settlementClock({ ...base, now: 1_050 });
@@ -172,9 +126,8 @@ describe("settlement clock", () => {
     expect(clock.end).toBe(1_200);
   });
 
-  it("adds the dispute window when a dispute was opened", () => {
-    const clock = settlementClock({ ...base, disputedAt: 1_020, resolveBy: 1_320, now: 1_400, status: "Completed" as const });
-    expect(clock.segments.map((segment) => segment.key)).toContain("dispute");
+  it("marks every segment done once the job has settled", () => {
+    const clock = settlementClock({ ...base, now: 1_400, status: "Completed" as const });
     expect(clock.segments.every((segment) => segment.state === "done")).toBe(true);
   });
 });
