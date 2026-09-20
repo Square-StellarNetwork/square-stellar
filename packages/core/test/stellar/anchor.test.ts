@@ -187,3 +187,35 @@ describe("the signed challenge", () => {
     expect(WebAuth.verifyTxSignedBy(tx, wallet.publicKey())).toBe(true);
   });
 });
+
+describe("the browser's fetch", () => {
+  /**
+   * In a browser `fetch` is a method of the window, and WebIDL refuses a call
+   * whose receiver is some other object. `Sep6Client` kept the function on a
+   * field and called `this.doFetch(...)` — the receiver was the client — so
+   * the deposit page answered "Failed to execute 'fetch' on 'Window':
+   * Illegal invocation" after SEP-1, SEP-10 and SEP-38, which call it with no
+   * receiver at all, had already worked. Node's fetch makes no such check, so
+   * this stands in for it.
+   */
+  function windowLike(): typeof fetch {
+    const real = globalThis.fetch;
+    return function (this: unknown, ...args: Parameters<typeof fetch>) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+      return real(...args);
+    } as typeof fetch;
+  }
+
+  it("is never called as a method of something else", async () => {
+    const options = { fetch: windowLike() };
+    const anchor = await discoverAnchor(mock.url, options);
+    const session = await authenticateWithAnchor(anchor, signer, options);
+    await expect(quotePrice(session, { sellAsset: sep38Asset.fiat("TRY"), buyAsset: sep38Asset.fiat("TRY"), sellAmount: "250" }, options)).resolves.toBeDefined();
+
+    const client = new Sep6Client(session, options);
+    await expect(client.info()).resolves.toBeDefined();
+    const opened = await client.deposit({ assetCode: "USDC", amount: "250", type: "bank_account" });
+    expect(opened.id).toBeDefined();
+    await expect(client.transaction(opened.id as string)).resolves.toBeDefined();
+  });
+});
