@@ -142,6 +142,14 @@ step "payment token"
 # the record's `token` is what the constructor was actually given.
 TOKEN_ASSET="${TOKEN_ASSET:-native}"
 TOKEN_CODE="${TOKEN_CODE:-XLM}"
+# `deploymentFromJson` requires the issuer of anything that is not XLM: a code
+# alone does not say which asset it is, and two issuers can use the same code.
+# TOKEN_ASSET is `native` or `CODE:ISSUER`, so the issuer is already here.
+case "$TOKEN_ASSET" in
+  native) TOKEN_ISSUER="" ;;
+  *:*)    TOKEN_ISSUER="${TOKEN_ASSET#*:}" ;;
+  *)      fail "TOKEN_ASSET must be 'native' or 'CODE:ISSUER'; got ${TOKEN_ASSET}" ;;
+esac
 # A SAC id is derived from the asset and the passphrase, not looked up, so
 # this needs no account and sends nothing. `deploymentFromJson` derives it
 # again when the record is read, and refuses a record that names another id.
@@ -224,17 +232,17 @@ ledger="$(curl -sS -X POST "$RPC_URL" -H 'Content-Type: application/json' \
 record="${repo_root}/contracts/deployments/${network}.json"
 node -e '
   const { writeFileSync } = require("node:fs");
-  const [file, network, passphrase, ledger, kernel, code, tokenContract, wasmSha] = process.argv.slice(1);
+  const [file, network, passphrase, ledger, kernel, code, tokenContract, wasmSha, issuer] = process.argv.slice(1);
   const record = {
     network: `stellar:${network}`,
     networkPassphrase: passphrase,
     ledger: Number(ledger),
     contracts: { square_job: kernel },
-    token: { code, contractId: tokenContract },
+    token: issuer ? { code, issuer, contractId: tokenContract } : { code, contractId: tokenContract },
     wasm: { square_job: wasmSha },
   };
   writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
-' "$record" "$network" "$NETWORK_PASSPHRASE" "$ledger" "$contract_id" "$TOKEN_CODE" "$token_contract" "$wasm_sha256"
+' "$record" "$network" "$NETWORK_PASSPHRASE" "$ledger" "$contract_id" "$TOKEN_CODE" "$token_contract" "$wasm_sha256" "$TOKEN_ISSUER"
 
 cat "$record"
 echo

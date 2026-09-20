@@ -26,7 +26,7 @@ const AMOUNTS = ["100", "250", "500"];
 /** SEP-6's statuses, in words. The anchor's own word is kept beside them. */
 const STATUS_COPY: Record<string, string> = {
   incomplete: "The anchor is waiting for something before it can start.",
-  pending_user_transfer_start: "Waiting for the bank transfer. On this sandbox it is simulated, so it moves on by itself.",
+  pending_user_transfer_start: "Waiting for the bank transfer. On this sandbox you make it happen from the anchor's own page — the link below.",
   pending_user_transfer_complete: "The transfer is in; the anchor is working on it.",
   pending_external: "The anchor is waiting on the banking side.",
   pending_anchor: "The anchor is processing it.",
@@ -147,8 +147,9 @@ export function DepositView() {
 
           <Step n={3} title={`Ask the anchor for ${fiat}`} done={state.stage === "done" || state.stage === "handed-over"}>
             <p>
-              You tell it how much {fiat} you are sending; it quotes a rate, takes the transfer and pays the asset into your wallet. On this
-              sandbox the transfer is simulated, so the whole thing finishes by itself in under a minute.
+              You tell it how much {fiat} you are sending; it quotes a rate, waits for the transfer, then pays the asset into your wallet. A real
+              anchor gives you bank details and waits for the money; this sandbox gives you a page with a button that plays the bank, and the link
+              to it appears below once the deposit is open.
             </p>
             <Field label={`Amount in ${fiat}`} htmlFor="deposit-amount">
               <input
@@ -218,9 +219,9 @@ export function DepositView() {
                   </Row>
                 )}
                 {state.transaction.moreInfoUrl === undefined ? null : (
-                  <Row label="The anchor's page">
+                  <Row label={state.transaction.status === "pending_user_transfer_start" ? "Send the money here" : "The anchor's page"}>
                     <a className="underline" href={state.transaction.moreInfoUrl} target="_blank" rel="noreferrer">
-                      open
+                      {state.transaction.status === "pending_user_transfer_start" ? "open the anchor's page and play the bank" : "open"}
                     </a>
                   </Row>
                 )}
