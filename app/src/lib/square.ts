@@ -20,7 +20,17 @@ export const RECENT_JOB_WINDOW = 50;
  */
 const EVENT_LOOKBACK_LEDGERS = 17_000;
 
-const readOnly: SquareClient | null = deployment === null ? null : createSquareClient({ deployment, rpc: rpcUrl });
+/**
+ * A plain-http RPC is a local quickstart's, on this machine or on a compose
+ * network, and is a deployment choice; the SDK refuses one unless told, so it
+ * is told here rather than at the top of every page. It is decided from the
+ * URL because the network profile is not enough: a testnet build can be
+ * pointed at a private RPC over http, and a local one at a TLS-terminated
+ * quickstart.
+ */
+const allowHttp = rpcUrl.startsWith("http://");
+
+const readOnly: SquareClient | null = deployment === null ? null : createSquareClient({ deployment, rpc: rpcUrl, allowHttp });
 
 /** The client every read uses; null until this build names a deployment. */
 export function useSquareRead(): SquareClient | null {
@@ -37,7 +47,7 @@ export function useSquare(): SquareClient | null {
   return useMemo(() => {
     if (deployment === null) return null;
     if (signer === undefined) return readOnly;
-    return createSquareClient({ deployment, rpc: rpcUrl, signer });
+    return createSquareClient({ deployment, rpc: rpcUrl, allowHttp, signer });
   }, [signer]);
 }
 

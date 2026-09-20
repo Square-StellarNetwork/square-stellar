@@ -3,8 +3,10 @@
 # in the shipped image, which is also how it is served in production.
 #
 # NEXT_PUBLIC_ values are read by the browser and are therefore baked in at
-# build time. They are endpoints, not addresses: the contract addresses come
-# from @squaresdk/core, which is the one place they are declared.
+# build time. They name the network and its endpoints, not addresses: the
+# contract addresses come from @squaresdk/core's deployment record for that
+# network, which is the one place they are declared. Empty endpoints mean the
+# network profile's own.
 FROM node:22-alpine AS build
 WORKDIR /src
 
@@ -27,12 +29,12 @@ RUN apk add --no-cache python3 make g++ \
     && npm install --install-links \
     && apk del make g++
 
-ARG NEXT_PUBLIC_CHAIN_ID
+ARG NEXT_PUBLIC_NETWORK=testnet
 ARG NEXT_PUBLIC_RPC_URL
-ARG NEXT_PUBLIC_INDEXER_URL
-ENV NEXT_PUBLIC_CHAIN_ID=$NEXT_PUBLIC_CHAIN_ID \
+ARG NEXT_PUBLIC_HORIZON_URL
+ENV NEXT_PUBLIC_NETWORK=$NEXT_PUBLIC_NETWORK \
     NEXT_PUBLIC_RPC_URL=$NEXT_PUBLIC_RPC_URL \
-    NEXT_PUBLIC_INDEXER_URL=$NEXT_PUBLIC_INDEXER_URL \
+    NEXT_PUBLIC_HORIZON_URL=$NEXT_PUBLIC_HORIZON_URL \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
