@@ -1,0 +1,278 @@
+"use client";
+
+import { useState } from "react";
+
+import { AddressLink, TxLink } from "@/components/AddressLink";
+import { EmptyState } from "@/components/EmptyState";
+import { Field, inputClass } from "@/components/Field";
+import { GhostButton } from "@/components/GhostButton";
+import { PanelCard } from "@/components/PanelCard";
+import { PillToggle } from "@/components/PillToggle";
+import { PrimaryButton } from "@/components/PrimaryButton";
+import { SectionHeading } from "@/components/SectionHeading";
+import { WalletButton } from "@/components/WalletButton";
+import type { Anchor } from "@squaresdk/core/stellar";
+import { Asset } from "@stellar/stellar-sdk";
+
+import { depositableAsset, openAnchorTrustline, useAnchor, useAnchorTrustline, useDeposit } from "@/lib/anchor";
+import { formatAmount } from "@/lib/format";
+import { useSquare } from "@/lib/square";
+import { anchorDomain, anchorFiat, network } from "@/lib/stellar";
+import { describeError, useTx } from "@/lib/tx";
+import { useWallet } from "@/lib/wallet";
+
+const AMOUNTS = ["100", "250", "500"];
+
+/** SEP-6's statuses, in words. The anchor's own word is kept beside them. */
+const STATUS_COPY: Record<string, string> = {
+  incomplete: "The anchor is waiting for something before it can start.",
+  pending_user_transfer_start: "Waiting for the bank transfer. On this sandbox it is simulated, so it moves on by itself.",
+  pending_user_transfer_complete: "The transfer is in; the anchor is working on it.",
+  pending_external: "The anchor is waiting on the banking side.",
+  pending_anchor: "The anchor is processing it.",
+  pending_stellar: "The anchor is sending the asset on Stellar.",
+  pending_trust: "Your account has no trustline for the asset, so the anchor cannot pay it.",
+  completed: "Done. The asset is in your wallet.",
+  refunded: "The anchor sent it back.",
+  expired: "The anchor gave up waiting.",
+  error: "The anchor stopped with an error.",
+};
+
+function Step({ n, title, done, children }: { n: number; title: string; done?: boolean; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span
+        aria-hidden="true"
+        className={`flex size-6 shrink-0 items-center justify-center rounded-full text-caption tabular-nums ${done ? "bg-mint-wash text-carbon" : "bg-mist text-graphite"}`}
+      >
+        {done ? "✓" : n}
+      </span>
+      <div className="flex min-w-0 flex-col gap-2">
+        <p className="text-body font-medium text-carbon">{title}</p>
+        <div className="flex flex-col gap-2 text-caption text-graphite">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The fiat rail into a wallet (#58): lira in through an anchor's SEP flows,
+ * the asset out in the wallet, ready to fund a job.
+ *
+ * The anchor on testnet simulates the bank leg. That is said at the top, in
+ * the step that waits for it, and next to the result — not once in small
+ * print — because the one thing a person must not misread here is whether
+ * real money moved.
+ */
+export function DepositView() {
+  const { address } = useWallet();
+  const client = useSquare();
+  const anchor = useAnchor();
+  const asset = depositableAsset(anchor.data ?? undefined);
+  const assetContract = asset === null ? undefined : anchorAssetContract(anchor.data, asset.code);
+  const trustline = useAnchorTrustline(assetContract);
+  const { state, start, reset } = useDeposit();
+  const { run, busy } = useTx();
+  const [amount, setAmount] = useState(AMOUNTS[1] ?? "250");
+
+  const fiat = asset?.fiat ?? anchorFiat;
+  const settled = state.stage === "done" || state.stage === "handed-over" || state.stage === "failed";
+  const running = state.stage !== "idle" && !settled;
+  const trustlineOpen = trustline.data?.open === true;
+
+  return (
+    <div className="flex flex-col gap-10">
+      <SectionHeading
+        title={`Put ${fiat} in, get a balance you can spend`}
+        description={`The job is funded on Stellar, so the money has to get there first. ${anchorDomain} takes ${fiat} and pays the asset into your wallet, over the SEP standards every Stellar anchor speaks.`}
+      />
+
+      <PanelCard
+        title="This anchor is a sandbox"
+        description={`${anchorDomain} simulates the bank leg: no ${fiat} moves anywhere, and nothing here can cost you money. What it pays into your wallet is real testnet USDC, and every request below is a real SEP request to a real anchor.`}
+      >
+        <p className="text-caption text-graphite">
+          It is the one endpoint serving {fiat} ⇄ USDC on testnet. A production anchor speaks the same four standards — SEP-1 to find it, SEP-10 to
+          sign in, SEP-38 to quote, SEP-6 to move the money — so nothing in this screen changes when the rail becomes a real one.
+        </p>
+      </PanelCard>
+
+      {anchor.isError ? (
+        <EmptyState title={`${anchorDomain} did not answer`} hint={describeError(anchor.error)} />
+      ) : (
+        <ol className="flex flex-col gap-6">
+          <Step n={1} title={address === null ? "Connect a wallet" : "Wallet connected"} done={address !== null}>
+            {address === null ? (
+              <>
+                <p>The anchor signs you in by asking your wallet to sign a challenge — SEP-10. It never sees your key, and neither does this page.</p>
+                <WalletButton />
+              </>
+            ) : (
+              <p>
+                The anchor will pay into <AddressLink address={address} />.
+              </p>
+            )}
+          </Step>
+
+          <Step n={2} title={trustlineOpen ? `Your account accepts ${asset?.code ?? "the asset"}` : `Let your account hold ${asset?.code ?? "the asset"}`} done={trustlineOpen}>
+            {address === null ? (
+              <p>An issued asset reaches an account only if that account has opted in. This step does that, once.</p>
+            ) : trustlineOpen ? (
+              <p>
+                Balance {formatAmount(trustline.data?.balance ?? 0n)} {asset?.code}. The anchor can pay it.
+              </p>
+            ) : (
+              <>
+                <p>
+                  On Stellar an issued asset reaches an account only if the account has opted in first — a trustline. It is one signature and it
+                  costs a fraction of a cent. Without it the anchor has nowhere to send the money.
+                </p>
+                <div>
+                  <PrimaryButton
+                    size="sm"
+                    disabled={busy || client === null || assetContract === undefined}
+                    onClick={() => {
+                      if (client === null || address === null || assetContract === undefined) return;
+                      void run(`Accept ${asset?.code ?? "the asset"}`, () => openAnchorTrustline(client, address, assetContract)).then(() =>
+                        trustline.refetch(),
+                      );
+                    }}
+                  >
+                    Accept {asset?.code ?? "the asset"}
+                  </PrimaryButton>
+                </div>
+              </>
+            )}
+          </Step>
+
+          <Step n={3} title={`Ask the anchor for ${fiat}`} done={state.stage === "done" || state.stage === "handed-over"}>
+            <p>
+              You tell it how much {fiat} you are sending; it quotes a rate, takes the transfer and pays the asset into your wallet. On this
+              sandbox the transfer is simulated, so the whole thing finishes by itself in under a minute.
+            </p>
+            <Field label={`Amount in ${fiat}`} htmlFor="deposit-amount">
+              <input
+                id="deposit-amount"
+                inputMode="decimal"
+                className={inputClass}
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                disabled={running}
+              />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              {AMOUNTS.map((preset) => (
+                <PillToggle key={preset} selected={amount === preset} onClick={() => setAmount(preset)}>
+                  {preset} {fiat}
+                </PillToggle>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <PrimaryButton
+                size="sm"
+                disabled={running || address === null || !trustlineOpen || amount.trim().length === 0}
+                onClick={() => void start(amount.trim())}
+              >
+                {running ? stageLabel(state.stage) : `Deposit ${amount} ${fiat}`}
+              </PrimaryButton>
+              {settled ? (
+                <GhostButton size="sm" onClick={reset}>
+                  Start again
+                </GhostButton>
+              ) : null}
+            </div>
+          </Step>
+        </ol>
+      )}
+
+      {state.stage === "idle" ? null : (
+        <PanelCard
+          title={
+            state.stage === "done"
+              ? "The money arrived"
+              : state.stage === "handed-over"
+                ? "The anchor has it"
+                : state.stage === "failed"
+                  ? "The anchor stopped"
+                  : "Following the deposit"
+          }
+          description={state.price === null ? undefined : `Quoted at ${state.price} ${fiat} per ${asset?.code ?? "unit"}.`}
+        >
+          <dl className="flex flex-col gap-3 text-caption">
+            {state.transaction === null ? null : (
+              <>
+                <Row label="Status">
+                  <span className="text-carbon">{STATUS_COPY[state.transaction.status] ?? "The anchor is working on it."}</span>{" "}
+                  <span className="text-ash">({state.transaction.status})</span>
+                </Row>
+                {state.transaction.amountIn === undefined ? null : (
+                  <Row label={`${fiat} in`}>{state.transaction.amountIn}</Row>
+                )}
+                {state.transaction.amountOut === undefined ? null : (
+                  <Row label={`${asset?.code ?? "Asset"} out`}>{state.transaction.amountOut}</Row>
+                )}
+                {state.transaction.amountFee === undefined ? null : <Row label="Anchor fee">{state.transaction.amountFee}</Row>}
+                {state.transaction.stellarTransactionId === undefined ? null : (
+                  <Row label="On chain">
+                    <TxLink hash={state.transaction.stellarTransactionId} />
+                  </Row>
+                )}
+                {state.transaction.moreInfoUrl === undefined ? null : (
+                  <Row label="The anchor's page">
+                    <a className="underline" href={state.transaction.moreInfoUrl} target="_blank" rel="noreferrer">
+                      open
+                    </a>
+                  </Row>
+                )}
+              </>
+            )}
+            {state.instructions?.how === undefined ? null : <Row label="How to send it">{state.instructions.how}</Row>}
+            {state.error === null ? null : <Row label="What happened">{state.error}</Row>}
+          </dl>
+
+          {state.stage === "handed-over" ? (
+            <p className="mt-4 text-caption text-graphite">
+              Your side is done: the anchor has taken the {fiat} and owes the payout. It can take a while to send it, and it is not waited on here —
+              the balance in step 2 is what says when it lands, and it refreshes by itself.
+            </p>
+          ) : null}
+          {state.stage === "done" || state.stage === "handed-over" ? (
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <PrimaryButton size="sm" href="/new" disabled={!trustlineOpen || (trustline.data?.balance ?? 0n) === 0n}>
+                Open a job with it
+              </PrimaryButton>
+              <span className="text-caption text-ash">No {fiat} moved: this anchor simulates the bank leg.</span>
+            </div>
+          ) : null}
+        </PanelCard>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-fog pb-2 last:border-b-0">
+      <dt className="shrink-0 text-graphite">{label}</dt>
+      <dd className="min-w-0 break-words text-right text-carbon">{children}</dd>
+    </div>
+  );
+}
+
+function stageLabel(stage: string): string {
+  if (stage === "signing") return "Signing in…";
+  if (stage === "quoting") return "Getting a rate…";
+  if (stage === "asking") return "Asking the anchor…";
+  return "Waiting for the anchor…";
+}
+
+/**
+ * The asset's Stellar Asset Contract. A SAC id is derived from the asset and
+ * the network's passphrase rather than looked up, so the anchor's `code` and
+ * `issuer` are the whole input and nothing has to be configured here.
+ */
+function anchorAssetContract(anchor: Anchor | undefined, code: string): string | undefined {
+  const currency = anchor?.currencies.find((entry) => entry.code === code);
+  if (currency?.issuer === undefined) return undefined;
+  return new Asset(currency.code, currency.issuer).contractId(network.networkPassphrase);
+}
