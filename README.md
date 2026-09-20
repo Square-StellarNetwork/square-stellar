@@ -152,15 +152,22 @@ roadmap below.
 |---|---|---|
 | `square_job` | [`CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII`](https://stellar.expert/explorer/testnet/contract/CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII) | challenge window 30 s, platform fee 2.5 %, native XLM; Wasm `e497c6bb…c2e1`, built from this tree |
 
-The 30-second window is the demo's, so a judge can watch a job settle; the
-production-parameter deployment (120 s, 1 %) is one run of
-`contracts/script/deploy-testnet.sh`, whose record lands in
-`contracts/deployments/testnet.json` and, copied, in `@squaresdk/core`'s
-`deploymentFor("stellar:testnet")`. Deployments use a fixed salt, so a testnet reset
-reproduces the same address from the same deployer and Wasm
+The 30-second window is the demo's, so a judge can watch a job settle. That address is
+the deployment: it is what `contracts/deployments/testnet.json` names and, copied, what
+`@squaresdk/core`'s `deploymentFor("stellar:testnet")` answers, so the app, the agent
+runtime and the SDK all resolve the same kernel. Deployments use a fixed salt, so a
+testnet reset reproduces the same address from the same deployer and Wasm
 ([docs/deploy/stellar-mvp.md](docs/deploy/stellar-mvp.md)). `npm --prefix packages/core
 run check:deployed-wasm` asks the chain which Wasm the contract runs and compares it with
-the record and the working tree's build.
+the record and the working tree's build; it passes on this deployment, which runs the
+same `e497c6bb…c2e1` this tree builds.
+
+`contracts/script/deploy-testnet.sh` deploys with production parameters (120 s, 1 %)
+unless `CHALLENGE_WINDOW` and `PLATFORM_FEE_BPS` say otherwise. Its defaults were run
+end to end on 2026-09-20 at
+[`CBSPPHW2…KFJQ`](https://stellar.expert/explorer/testnet/contract/CBSPPHW2P5NGITR7Z5NJIN6IB5VIOHOQDSVMWXT4LH6WZCHMHUA2KFJQ)
+([the run](docs/deploy/lifecycle-testnet-2026-09-20-script-defaults.md)), which is how
+the script itself is known to work; the demo above is the deployment the record names.
 
 What ran against it, all from the SDK: create (0.0135 XLM in fees), price, fund 2.5 XLM
 (0.0026 XLM), submit, a finalize inside the window refused in simulation (`WindowOpen`,
@@ -169,6 +176,12 @@ runtime, hired by a fresh account, finding the job by itself, working it, submit
 finalizing and withdrawing. `packages/core/test/stellar/live.test.ts` and
 `packages/agent/test/stellar-live.test.ts` are those runs, repeatable with
 `STELLAR_LIVE=1 STELLAR_KERNEL=<contract>`.
+
+Job 4 is the same path run by `npm --prefix packages/core run lifecycle:stellar`, which
+writes every transaction hash, ledger and fee it charged to
+[docs/deploy/lifecycle-testnet.md](docs/deploy/lifecycle-testnet.md): 10 XLM funded,
+9.75 paid out, 0.25 kept, and 0.0328744 XLM of network fees across the six
+transactions.
 
 ## Try it
 

@@ -88,16 +88,6 @@ export class InvalidDeploymentError extends Error {
   }
 }
 
-/**
- * The deployments compiled into this package, one per network, filled in as
- * the stacks are deployed: the local stack's record is written by its deployer
- * (#43) and read from disk, the testnet record by #19/#45. Until then
- * `deploymentFor` knows nothing and says so. A test asserts that whatever is
- * here agrees with contracts/deployments/<network>.json, the record the
- * deploy scripts write.
- */
-export const deployments: Readonly<Partial<Record<StellarNetworkId, SquareDeployment>>> = {};
-
 export function deploymentFor(network: StellarNetworkId): SquareDeployment {
   const found = deployments[network];
   if (!found) throw new UnknownDeploymentError(network);
@@ -258,6 +248,36 @@ export function deploymentFromJson(json: unknown): SquareDeployment {
   }
   return out as unknown as SquareDeployment;
 }
+
+/**
+ * The deployments compiled into this package, one per network, filled in as
+ * the stacks are deployed: the local stack's record is written by its deployer
+ * (#43) and read from disk, the testnet record by #19/#45. Until then
+ * `deploymentFor` knows nothing and says so. A test asserts that whatever is
+ * here agrees with contracts/deployments/<network>.json, the record the
+ * deploy scripts write.
+ */
+export const deployments: Readonly<Partial<Record<StellarNetworkId, SquareDeployment>>> = {
+  /**
+   * `contracts/deployments/testnet.json` (#45): the kernel the demo runs on,
+   * deployed with a 30 s challenge window so a settlement can be watched, and
+   * a 2.5 % platform fee. Every value here was read back from the chain — the
+   * contract's own `config`, the executable hash of its instance, and the
+   * ledger of its first event, which is where an indexer starts. Read through
+   * `deploymentFromJson` rather than written out as an object, so the copy
+   * compiled in here and the record on disk are the same shape checked the
+   * same way; the test compares them field by field.
+   */
+  "stellar:testnet": deploymentFromJson({
+    network: "stellar:testnet",
+    // The passphrase is the SDK's, never spelled out here (single-source.test.ts).
+    networkPassphrase: passphraseOf("stellar:testnet"),
+    ledger: 4766069,
+    contracts: { square_job: "CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII" },
+    token: { code: "XLM", contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" },
+    wasm: { square_job: "e497c6bbea72b06c9080281b1b08d9ec5ee2b3b01154584eb8332ee22e81c2e1" },
+  }),
+};
 
 /**
  * Every contract the record names, with its crate name; the payment token as

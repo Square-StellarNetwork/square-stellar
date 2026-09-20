@@ -1,0 +1,15 @@
+{
+  "network": "stellar:testnet",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "ledger": 4766069,
+  "contracts": {
+    "square_job": "CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII"
+  },
+  "token": {
+    "code": "XLM",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  },
+  "wasm": {
+    "square_job": "e497c6bbea72b06c9080281b1b08d9ec5ee2b3b01154584eb8332ee22e81c2e1"
+  }
+}
