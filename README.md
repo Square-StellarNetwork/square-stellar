@@ -7,240 +7,283 @@
 
 <h1 align="center">Square</h1>
 
-<p align="center"><strong>Compliance-gated settlement for autonomous agent work, on <a href="https://stellar.org">Stellar</a>.</strong></p>
+<p align="center"><strong>Hire an AI agent, pay it in XLM. Escrow on <a href="https://stellar.org">Stellar</a>, settled by a Soroban contract.</strong></p>
 
-An institution commits a private spending mandate on-chain: the chain holds a commitment
-to it, and the institution's own tools prove each release in their own process, so the
-policy behind the commitment never leaves them
-([prover-trust-boundary.md](docs/decisions/prover-trust-boundary.md)). The app's job page
-is the exception: it sends the policy to the prover it is configured with, whose operator
-sees it. Identified agents execute against the mandate. The hook that releases escrow
-carries a compliance slot: with a module installed, a release must first prove, in zero
-knowledge, that it fits the mandate. Escrow protects the provider against everything
-except that mandate: a payment the mandate forbids returns to the client with the reason
-on chain, and a proof that is merely missing holds the escrow until the institution does
-its duty ([proof-required.md](docs/decisions/proof-required.md)). The receivable created
-during the challenge window is discountable, and sells only to a buyer the institution's
-policy approved.
-
-The proof is a Groth16 proof over BN254, and Stellar verifies it natively: Soroban's
-BN254 host functions ([CAP-0074](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0074.md),
-Protocol 25, and [CAP-0080](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0080.md),
-Protocol 26) carry the pairing check, so the circuit, its phase-1 powers of tau and the
-Poseidon policy commitment are the same ones the earlier Arc and Solana versions of this
-work used. Only the verifier is written for Soroban.
+<p align="center">
+  <a href="https://stellar.expert/explorer/testnet/contract/CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII">Contract on Stellar Testnet</a> ·
+  <a href="https://square-protocol.vercel.app">Website</a> ·
+  <a href="docs/deploy/stellar-mvp.md">Deploy runbook</a> ·
+  <a href="packages/core/README.md">SDK</a> ·
+  <a href="packages/agent/README.md">Agent</a>
+</p>
 
 ---
 
-## Status
+## Why
 
-**Pre-alpha on Stellar Testnet (Protocol 27).** The settlement layer and the Groth16
-verifier are deployed on the testnet; the verifier sits at an address the ceremony will
-replace, and the testnet itself is reset a few times a year, so every address below is
-reproduced by script rather than remembered. Nothing carries an assurance claim.
+AI agents are becoming services you hire for a task: summarise this, translate that,
+research the other. Paying one today means trusting it up front, or trusting a platform
+in the middle. Neither side has a guarantee: the client that the work will arrive, the
+agent that it will be paid.
 
-`***` marks a value that is written when the deployment it comes from lands
-([#45](https://github.com/Square-StellarNetwork/square-stellar/issues/45)); the migration
-is tracked in [#48](https://github.com/Square-StellarNetwork/square-stellar/issues/48).
+Square puts the payment in escrow on Stellar and lets the chain settle it. The client
+funds a job in XLM; the agent delivers; the client has a short window to reject; after
+that the payout is the agent's, and nobody — not Square, not a platform, not the other
+party — can hold it back or take it. Everything settles in seconds for a fraction of a
+cent, which is what makes it work for jobs priced in single XLM.
 
-| Layer | State |
-|---|---|
-| Identity: `did:aip` v3 (`stellar` namespace), agent card, CLI, Universal Resolver driver | resolves 8004 registries on Stellar Testnet ([docs/smoke](docs/smoke/)) |
-| Settlement: `square_job`, `keeper_evaluator`, `arbitration`, `claim_market`, `square_hook` | Soroban contracts on Stellar Testnet, covered by the Rust suite including a kernel-solvency invariant; the five settlement paths run on the testnet with real USDC and the 8004 registries (`***`, the dated record) |
-| Services: indexer, keeper, sanctions screener, x402 gateway, data layer, observability | implemented and tested against the local stack (`stellar/quickstart`); the screener also against its sanctions source |
-| Compliance: circuit, prover, Groth16 verifier, `compliance_module`, the institution's side | circuit and prover unchanged from the Arc version; verifier built on the BN254 host functions; the module exists and the shared hook's slot is `***`; the institution's side, `@squaresdk/policy`, the `square policy` commands, `square_hire`, the hosted agent and the app, commits policies and keeps proofs bound to jobs |
-| Website (`site/`) | live at [square-protocol.vercel.app](https://square-protocol.vercel.app), adapted from an MIT template with Square's own copy and surfaces, every button leads to the app |
-| App: reference web application (`app/`) | a static Next.js export that reads the deployed contracts through `@squaresdk/core` and drives every lifecycle action from a connected Stellar wallet; no mocked data ([app/README.md](app/README.md)) |
+**Who it is for:** anyone hiring an agent for a discrete task, and anyone running one.
+The MVP ships both sides: an app for the client and an agent runtime that watches the
+chain, does the work and collects.
 
-> The ZK trusted setup is a **development setup** in phase 2: the phase 1 is real, the
-> Perpetual Powers of Tau contribution 80 adopted and verified by hash
-> ([docs/ceremony/phase1-ptau.md](docs/ceremony/phase1-ptau.md)), and the phase 2 is a
-> single contribution with no beacon. Either half on its own lets that machine forge a
-> proof for any statement. [#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51)
-> is the public phase-2 ceremony on the Stellar version of the circuit and it has not been
-> held. Until it completes, nothing here carries an assurance claim of any kind. Evidence
-> and wording: [docs/disclosure/](docs/disclosure/); read either phase out of any key with
-> [`circuits/scripts/inspect-zkey-setup.mjs`](circuits/scripts/inspect-zkey-setup.mjs).
+## How it works
 
-## Design
-
-Three layers. Stellar supplies the bottom one.
-
-| Layer | What we build | Stellar primitive it sits on |
-|---|---|---|
-| Identity | `did:aip` v3 resolver, agent card schema | the 8004 Identity Registry on Soroban (a per-network singleton) |
-| Settlement | `square_job` (escrow kernel, pull-payment ledger), `keeper_evaluator` (optimistic challenge window, paid permissionless finalize), `arbitration` (bonded disputes, M-of-N), `claim_market` (receivable discounting) | Soroban contracts, the USDC Stellar Asset Contract (SEP-41), the authorization framework in place of `approve` |
-| Compliance | `square_hook` routes the payout, runs the Groth16 check and writes reputation; `compliance_module` plugs into its slot; `groth16_verifier` does the pairing | BN254 host functions (CAP-0074, CAP-0080), the 8004 Reputation and Validation registries |
-
-The composition point is the hook: the proof gates **release**, not deposit, and it is
-bound to the address the kernel will actually pay, which is the receivable's buyer when
-the receivable was sold. Who can become that buyer is gated too: the poster's policy
-publishes the root of a salted list of approved buyers, and `buy` checks the purchaser
-against it without the list reaching the chain
-([buyer-eligibility.md](docs/decisions/buyer-eligibility.md)). Reputation stays with the
-agent that did the work.
-
-Two things are different on Soroban and shape every contract. The host **prohibits
-re-entry**, so the kernel hands the hook everything it needs as arguments and the hook
-never reads the kernel back; and there is no per-call gas limit, only one budget per
-transaction, so a hook that fails is tolerated but a hook that exhausts the budget is
-not. Both are decided in
-[#3](https://github.com/Square-StellarNetwork/square-stellar/issues/3).
-
-Design notes, each the record of a decision:
-
-- [Storage layout and event schema](docs/design/storage-and-events.md)
-- [SquareHook: one hook, selector routing, shared optParams](docs/design/square-hook.md)
-- [Data layer: one Postgres, chain is the source of truth](docs/design/data-layer.md)
-- [Keeper economics: why the crank is paid](docs/design/keeper-economics.md)
-- [Travel Rule: the commitment goes on chain, the personal data never does](docs/design/travel-rule.md)
-- [The daily ceiling is public, the policy behind it is not](docs/decisions/public-daily-ceiling.md)
-- [The proof is made where the policy lives](docs/decisions/prover-trust-boundary.md)
-- [A missing proof holds the escrow; only the mandate refunds](docs/decisions/proof-required.md)
-- [A hook informs, it never vetoes, on the way out of escrow](docs/decisions/hook-failure-modes.md)
-- [A lapsed dispute returns the bond](docs/decisions/lapsed-bond.md)
-- [From the mandate to the payment: the product in one flow](docs/design/mandate-to-payment.md)
-
-Decisions the move to Stellar adds, each an issue until its record is written:
-Groth16 on the BN254 host functions ([#2](https://github.com/Square-StellarNetwork/square-stellar/issues/2)),
-the call graph under the re-entry prohibition ([#3](https://github.com/Square-StellarNetwork/square-stellar/issues/3)),
-32-byte addresses as field elements ([#4](https://github.com/Square-StellarNetwork/square-stellar/issues/4)),
-authorization and the token flow ([#5](https://github.com/Square-StellarNetwork/square-stellar/issues/5)),
-resource fees, keeper economics and ledger-entry TTLs ([#6](https://github.com/Square-StellarNetwork/square-stellar/issues/6)),
-upgradeability and governance ([#49](https://github.com/Square-StellarNetwork/square-stellar/issues/49)).
-
-## Provenance
-
-Distilled from three prior projects and one earlier chain. Selected components only; no
-on-chain layer is ported as code.
-
-| Source | What carries over |
-|---|---|
-| aperture | Circom circuit, Poseidon policy commitment, prover service |
-| aip-beta | `did:aip` spec and resolver, A2A task protocol, MCP bridge, agent SDK |
-| covenant | Escrow state machine (as specification), x402 verifier, chain-agnostic hardening |
-| square on Arc | The contract design, the hook, the compliance module and every decision record; the EVM code is rewritten for Soroban |
-
-## Running it
-
-Everything, on a local Stellar network, from one command:
-
-```bash
-make up
+```text
+create_job ──set_budget──▶ Open ──fund──▶ Funded ──submit──▶ Submitted
+                            │               │                    │
+                         reject          reject             reject (inside the window)
+                            ▼               ▼ claim_refund       ▼             finalize (after it, anyone)
+                         Rejected      Rejected / Expired     Rejected         Completed
 ```
 
-That brings up a local network (`stellar/quickstart`: core, RPC, Horizon, Friendbot),
-deploys the contracts to it, migrates Postgres, builds the circuit artifacts, and starts
-the prover, the indexer, the screener, the keeper and the application, returning only
-once all five report healthy. Docker, git and make are the whole prerequisite.
-[docs/deploy/local-stack.md](docs/deploy/local-stack.md) has the ports, the measured
-start-up time and how to point the same stack at Stellar Testnet.
+1. **Open.** The client opens a job for an agent's address with a description: the work
+   order (`summarise: the quarterly report`).
+2. **Price.** The agent sets the budget it wants; the client accepts by funding exactly
+   that amount. A repriced job cannot be funded by surprise (`BudgetMismatch`).
+3. **Fund.** XLM moves from the client into the contract in one signed transaction. No
+   `approve` step exists on Stellar: the client's one authorization covers the call and
+   the token transfer beneath it.
+4. **Deliver.** The agent runs the job and submits the SHA-256 of its output. The content
+   itself is served by the agent; the hash on chain is what proves it later.
+5. **Window.** The client may `reject` for `challenge_window` seconds and gets the whole
+   budget back. Otherwise, once the window has passed, **anyone** may `finalize`: the
+   agent is credited the budget less the platform fee, the fee goes to the owner.
+6. **Withdraw.** Credits are pulled, never pushed: the agent (or a refunded client) calls
+   `withdraw_to` and the XLM leaves the contract.
+
+A funded job the agent never delivers expires at `expired_at`, and `claim_refund` returns
+the budget to the client. A delivered job cannot expire: it settles only by `reject` or
+`finalize`.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Client
+    App["Web app<br/>(Next.js, Stellar Wallets Kit)"]
+    Wallet["Freighter / any<br/>Stellar wallet"]
+  end
+  subgraph Agent["Agent runtime (square-hosted)"]
+    Loop["Provider loop<br/>watch · work · submit · finalize · withdraw"]
+    Model["Claude"]
+    HTTP["HTTP<br/>/jobs/:id/deliverable"]
+  end
+  SDK["@squaresdk/core/stellar<br/>simulate → sign → send"]
+  RPC["Stellar RPC<br/>(testnet)"]
+  Kernel["square_job<br/>Soroban contract"]
+  XLM["Native XLM<br/>Stellar Asset Contract"]
+
+  App --> Wallet
+  App --> SDK
+  Loop --> SDK
+  Loop --> Model
+  SDK --> RPC --> Kernel
+  Kernel -- transfer --> XLM
+  App -- reads the deliverable --> HTTP
+```
+
+| Component | Where | What it does |
+|---|---|---|
+| `square_job` | `contracts/contracts/square_job` | The kernel: the state machine above, the escrow and a pull-payment ledger. One Soroban contract, 22.6 KB of Wasm, no upgrade entry point. |
+| `square-common` | `contracts/common` | The types, error codes, events, TTL rules and the two-step owner the kernel is built on. |
+| `@squaresdk/core/stellar` | `packages/core` | The TypeScript client: every kernel method, the network profile, the deployment record, the signer abstraction, error and event decoding. Arguments and results go through the contract's own generated bindings, so the SDK carries no copy of the interface. |
+| `@squaresdk/agent/stellar` | `packages/agent` | The agent for hire: finds the jobs created for its key, works them once funded, submits, finalizes after the window, withdraws, and serves the deliverable behind the hash. Restart-safe: its state lives in a file. |
+| `square-hosted` | `packages/hosted` | The agent from a configuration file: each capability's instructions become a Claude run on the job's description. |
+| App | `app/` | The client's side: connect a wallet, pick an agent, open, fund, read the deliverable, reject or wait, withdraw. Reads the job list straight from RPC (`getEvents`), no indexer. |
+| Deploy script | `contracts/script/deploy.sh` | Build → upload → deploy at a fixed salt → constructor → read back → write `contracts/deployments/<network>.json`. |
+
+## Stellar, specifically
+
+**Soroban authorization instead of `msg.sender` and `approve`.** Every write takes the
+acting address as a parameter and calls `require_auth()` on it, then compares it with the
+job record. `fund` moves XLM through the native Stellar Asset Contract's SEP-41
+`transfer` inside the client's own authorization tree, so one signature covers the call
+and the transfer; the authorization trees were measured on testnet before the contract
+was written ([auth-and-token-flow.md](docs/decisions/auth-and-token-flow.md)). The two
+cranks, `finalize` and `claim_refund`, name nobody: anyone may send them.
+
+**Storage and TTL.** Jobs and balances are persistent entries, settings are instance
+storage. A job's entry is extended to live until `expired_at + challenge_window` plus one
+window of slack; balances are refreshed to the network's `minPersistentTtl` on every
+write. The two network values the rules convert with (`ledgerTargetCloseTimeMilliseconds`,
+`minPersistentTtl`) are written in by the deploy script and correctable by the owner, so
+no ledger count is typed into the contract ([fees-and-ttl.md](docs/decisions/fees-and-ttl.md)).
+
+**Events in the contract spec.** The kernel's events are `#[contractevent]` structs, so
+their schema ships inside the Wasm; the SDK and the agent read `job_created`, `funded`,
+`submitted`, `finalized`, `rejected`, `refunded`, `withdrawn` from the spec rather than
+from a hand-written table.
+
+**Ecosystem pieces used.** [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit)
+for the app's wallet connection (any SEP-43 wallet is a `Signer` to the SDK);
+`soroban-sdk` 27.0.6 and `stellar-cli` 27.1.0 for the contract, its tests and its
+bindings; `@stellar/stellar-sdk` 16.3.0 for everything in TypeScript; Stellar RPC and
+Friendbot on testnet; Stellar Expert for the links.
+
+**Stellar Skills referenced** ([skills.stellar.org](https://skills.stellar.org)):
+`skills/standards/SKILL.md` (SEPs, CAPs & Ecosystem) is where the standards this codebase
+implements come from — SEP-41 (the token interface), SEP-43 (the wallet interface),
+SEP-53 (signed messages, `@squaresdk/hardening`), CAP-0073 (`trust`) and Soroban's
+authorization framework; `skills/smart-contracts/SKILL.md` and `skills/dapp/SKILL.md`
+(both in `stellar/stellar-dev-skill`) cover the contract and the app; the Anchors skill
+(`CheesecakeLabs/stellar-anchor-skill/SKILL.md`) is the reference for the TRY rail on the
+roadmap below.
+
+## Deployed on Stellar Testnet
+
+| | |
+|---|---|
+| Network | Stellar Testnet (`Test SDF Network ; September 2015`, CAIP-2 `stellar:testnet`) |
+| RPC / Horizon / Friendbot | `https://soroban-testnet.stellar.org` · `https://horizon-testnet.stellar.org` · `https://friendbot.stellar.org` |
+| Payment token | Native XLM through its Stellar Asset Contract `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` (7 decimals; every account holds it, no trustline) |
+| Fees | XLM, paid by whoever submits the transaction |
+
+| Contract | Address | Parameters |
+|---|---|---|
+| `square_job` | [`CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII`](https://stellar.expert/explorer/testnet/contract/CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII) | challenge window 30 s, platform fee 2.5 %, native XLM; Wasm `e497c6bb…c2e1`, built from this tree |
+
+The 30-second window is the demo's, so a judge can watch a job settle; the
+production-parameter deployment (120 s, 1 %) is one run of
+`contracts/script/deploy-testnet.sh`, whose record lands in
+`contracts/deployments/testnet.json` and, copied, in `@squaresdk/core`'s
+`deploymentFor("stellar:testnet")`. Deployments use a fixed salt, so a testnet reset
+reproduces the same address from the same deployer and Wasm
+([docs/deploy/stellar-mvp.md](docs/deploy/stellar-mvp.md)). `npm --prefix packages/core
+run check:deployed-wasm` asks the chain which Wasm the contract runs and compares it with
+the record and the working tree's build.
+
+What ran against it, all from the SDK: create (0.0135 XLM in fees), price, fund 2.5 XLM
+(0.0026 XLM), submit, a finalize inside the window refused in simulation (`WindowOpen`,
+nothing sent), finalize after it (payout 2.4375, fee 0.0625), withdraw; and the agent
+runtime, hired by a fresh account, finding the job by itself, working it, submitting,
+finalizing and withdrawing. `packages/core/test/stellar/live.test.ts` and
+`packages/agent/test/stellar-live.test.ts` are those runs, repeatable with
+`STELLAR_LIVE=1 STELLAR_KERNEL=<contract>`.
+
+## Try it
+
+**The app.** `***` — connect Freighter on testnet (Friendbot funds a new testnet account
+with 10,000 XLM), pick an agent, open and fund a job, watch it come back.
+
+**Run an agent yourself.** A configuration names the capabilities and their
+instructions; the runtime does the rest.
+
+```bash
+cd packages/hosted && npm install --install-links && npm run build
+SQUARE_NETWORK=stellar:testnet \
+SQUARE_SECRET_KEY=S…                                  # a Friendbot-funded key: jobs are created for it
+SQUARE_DEPLOYMENT_FILE=../../contracts/deployments/testnet.json \
+ANTHROPIC_API_KEY=sk-ant-… \
+node dist/bin.js atlas.json                          # see packages/hosted/README.md for atlas.json
+```
+
+It logs each job as it is discovered, worked, submitted, finalized and paid, and serves
+`GET /jobs/<id>/deliverable` for the client.
+
+**Drive the flow from code.**
+
+```ts
+import { connectSquareClient, deploymentFromJson, kernelEvent, keypairSigner, usdcUnits } from "@squaresdk/core/stellar";
+
+const deployment = deploymentFromJson(JSON.parse(readFileSync("contracts/deployments/testnet.json", "utf8")));
+const client = await connectSquareClient({ deployment, signer: keypairSigner(Keypair.fromSecret(secret), deployment.networkPassphrase) });
+
+const { result: jobId } = await client.createJob({ provider: agentAddress, expiredAt: now + 3600n, description: "summarise: the quarterly report" });
+await client.fund(jobId, usdcUnits("2.5"));                  // after the agent priced it: 25000000n stroops
+const job = await client.getJob(jobId);                     // status, deliverable hash, finalizeAfter
+```
+
+Every write is simulated first; a refusal comes back as the contract's own error by name
+(`WindowOpen`, `NotClient`, `BudgetMismatch`, …) and nothing is signed or sent.
+
+**Deploy your own kernel.**
+
+```bash
+stellar keys generate --fund --network testnet square-testnet-deployer
+BROADCAST=0 contracts/script/deploy-testnet.sh   # review every parameter, send nothing
+contracts/script/deploy-testnet.sh               # deploy, write contracts/deployments/testnet.json
+SQUARE_NETWORK=testnet npm --prefix packages/core run lifecycle:stellar   # one job end to end, with every fee recorded
+```
+
+## Tests
+
+| Where | What |
+|---|---|
+| `contracts/` — `cargo test --locked` | The kernel against a real Stellar Asset Contract in the Soroban test host: the optimistic path with every event checked, the reject paths, expiry, every guard, unsigned calls, owner functions under a stranger's authorization, two-step ownership, TTL, fee arithmetic, and a solvency invariant (`balance == escrowed + withdrawable`) over 400 random actions. |
+| `packages/core` — `npm test` | The client against real testnet RPC answers captured as fixtures and return values encoded with the contract's spec; the deployment record; events; amounts; signers. |
+| `packages/agent`, `packages/hosted` — `npm test` | The provider loop against an in-memory kernel (lifecycle, the ledger's clock, capability choice, price, retries, resume from disk, rejection and expiry), the HTTP surface, the model runner with a scripted model. |
+| Live — `STELLAR_LIVE=1 STELLAR_KERNEL=C… npm test` | The same flows against the testnet contract, from Friendbot accounts. |
+
+Every pull request runs the first three, plus a secret scan and a check that the
+committed bindings match the contracts.
+
+## Design decisions
+
+Each is a record in [docs/decisions/](docs/decisions/), written before the code:
+
+- **Testnet, Protocol 27, versions pinned** — `soroban-sdk =27.0.6`, `stellar-cli 27.1.0`, `@stellar/stellar-sdk 16.3.0`, Rust 1.98.1 ([stellar-target.md](docs/decisions/stellar-target.md)).
+- **The window model** — the client's silence is consent; anyone may finalize; rejection is a full refund. No evaluator, no arbitration in the MVP: the simplest settlement that protects both sides.
+- **Explicit signers, no `approve`, `i128` at the boundary and `u64` in the record** ([auth-and-token-flow.md](docs/decisions/auth-and-token-flow.md)).
+- **TTL by rule, not by number** ([fees-and-ttl.md](docs/decisions/fees-and-ttl.md)).
+- **No upgrade entry point.** The escrow's code cannot change under a user's funds; CI fails any Wasm that imports `update_current_contract_wasm` ([upgradeability-and-governance.md](docs/decisions/upgradeability-and-governance.md)).
+- **XLM, not USDC, for the MVP.** Every account holds XLM and needs no trustline, so a client can fund a job the minute Friendbot pays it. The SDK is token-generic (`trustline`, `tokenBalance`, `trustToken`) for the day the token is an issued asset.
+
+**Trade-offs taken.** The deliverable's content lives with the agent, only its hash on
+chain: cheap, and verifiable by anyone who has the content. The agent's price is enforced
+by the agent, not the kernel: a job funded below it is left alone. The window is a
+deployment parameter, not per job: one rule, one thing to explain.
+
+**Challenges.** Soroban has no `msg.sender` and no allowance, so the whole flow had to be
+redesigned around authorization trees and measured on chain first. Ledger entries expire
+(state archival), so every write had to reason about how long its entries must live. The
+testnet is reset a few times a year, so addresses are reproduced by script rather than
+kept. The generated bindings put the event schema and the error table in the Wasm, and
+the SDK was built to read them from there rather than duplicate them.
+
+## Roadmap
+
+The next step is an SCF / InstAward application for the parts the MVP deliberately left
+out, each already designed in `docs/decisions/`:
+
+1. **A TRY rail**: an anchor (SEP-1/10/12/24/38) so a client can put Turkish lira in and
+   an agent take it out.
+2. **USDC as the payment token** through Circle's CCTP, on the token-generic SDK.
+3. **Identity**: `did:aip` on the 8004 registries, so agents are discoverable and carry
+   reputation.
+4. **The compliance gate**: a zero-knowledge proof that a release fits an institution's
+   private spending mandate, verified on Stellar's BN254 host functions. The circuit and
+   the prover are in this repository; their trusted setup is a development one and says
+   so ([docs/disclosure/](docs/disclosure/)).
+5. **Disputes**: an optimistic evaluator with a paid finalize, and bonded arbitration.
 
 ## Layout
 
 ```
-contracts/   Rust/Soroban workspace: square_job, keeper_evaluator, arbitration, claim_market,
-             square_hook, policy_registry, compliance_module, groth16_verifier,
-             screening_registry, deploy scripts and the test suite
-circuits/    Circom payment-compliance circuit + ceremony scripts
-packages/    did-resolver, cli, did-aip-driver, core (SDK, generated contract bindings),
-             data (Postgres access layer + migrations), hardening (SSRF, idempotency, rate
-             limit, RPC failover, signed actions), observability (logs, metrics, health,
-             alerts), x402 (payment gateway), aa (fee sponsorship and smart accounts),
-             a2a (task protocol), agent (an agent in a few lines: card, A2A tasks paid
-             through escrow, x402), mcp (agents calling MCP tools; Square as an MCP server
-             for Claude Desktop), hosted (an institution's agent run from a configuration),
-             policy (the institution's side of the compliance gate)
-services/    prover, indexer, keeper, screener (sanctions screening)
-app/         Next.js reference application (static export, Stellar Wallets Kit, Open Runde design system)
-site/        The website at https://square-protocol.vercel.app: what Square is, and the door to the app
-docs/        Specifications, design notes, measurements, disclosure
+contracts/   Soroban workspace: square_job (the kernel), common, deploy scripts, tests;
+             the earlier Arc (EVM) contracts remain for reference
+packages/    core (the SDK, @squaresdk/core/stellar), agent (@squaresdk/agent/stellar),
+             hosted (square-hosted), hardening (SEP-53, RPC failover), and the packages
+             of the earlier version (a2a, mcp, policy, x402, aa, data, observability, cli)
+app/         The client's web app (Next.js static export, Stellar Wallets Kit)
+site/        The website
+docs/        Decision records, the deploy runbook, measurements, disclosure
+circuits/, services/   The compliance circuit and prover, and the services of the earlier version
 ```
 
-The packages publish to npm under `@squaresdk`, all thirteen at one version from a
-`v<version>` tag ([docs/decisions/distribution-channel.md](docs/decisions/distribution-channel.md));
-the first tag has not been cut, so today each is built from this clone, and every pull
-request packs the thirteen and installs the tarballs into an empty project so that the
-day it is cut nothing is missing from them.
-
-Every pull request runs the contract, circuit, prover, package and application suites.
-The circuit and prover jobs build the artifacts their tests refuse to run without,
-because a suite that quietly skips itself is the failure this is set up to catch.
-[docs/ci.md](docs/ci.md) lists the checks, what each proves, and which are required to
-merge.
-
-## Network
-
-| | |
-|---|---|
-| Network | Stellar Testnet, Protocol 27 ([docs/decisions/stellar-target.md](docs/decisions/stellar-target.md)) |
-| Network passphrase | `Test SDF Network ; September 2015` |
-| CAIP-2 | `stellar:testnet` |
-| RPC | `https://soroban-testnet.stellar.org` |
-| Horizon | `https://horizon-testnet.stellar.org` |
-| Friendbot | `https://friendbot.stellar.org` |
-| Explorer | `https://stellar.expert/explorer/testnet` |
-| Fee token | XLM (resource fees and inclusion fee) |
-| Payment token | USDC, issued natively by Circle: issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`, Stellar Asset Contract `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` (7 decimals) |
-| USDC from elsewhere | Circle's CCTP V2, Stellar domain `27`: burned on Ethereum, Base or Arbitrum Sepolia, attested by Circle, minted here through Circle's `CctpForwarder`, then funded into a job ([docs/design/cctp-funding.md](docs/design/cctp-funding.md)) |
-| 8004 registries | Identity `***`, Reputation `***`, Validation `***` |
-
-Escrow and payment paths use the USDC Stellar Asset Contract: amounts are 7-decimal
-base units, funding is a `transfer` the client authorizes for the kernel's call, and no
-`approve` step exists. Fees are paid in XLM by whoever submits the transaction, which is
-what lets a keeper or a relayer submit an agent's signed authorization on its behalf.
-
-### Deployments
-
-| Contract | Address | Status |
-|---|---|---|
-| `groth16_verifier` | `***` | **temporary** — keyed to the development proving key, replaced by the ceremony's ([#51](https://github.com/Square-StellarNetwork/square-stellar/issues/51)) |
-
-`circuits/scripts/build.mjs` draws fresh phase-2 entropy on every build, so any verifier
-deployed today is already wrong for tomorrow's build. Every deployment before #51 has a
-lifetime of one `npm run build`. The ceremony fixes one key, and that is the one worth
-an address — on mainnet, because the testnet is reset a few times a year and its
-addresses are reproduced by script rather than kept
-([#54](https://github.com/Square-StellarNetwork/square-stellar/issues/54)).
-
-A proof from the prover service verifies against Stellar's own BN254 host functions,
-with one read-only `simulateTransaction` against the testnet and nothing sent:
-
-```bash
-node contracts/script/verify-on-stellar.mjs
-```
-
-The measured cost of one verification — CPU instructions, ledger bytes read, and the
-resource fee in XLM — is `***`; the table it belongs to, `docs/deploy/resource-fees.md`,
-lands with [#6](https://github.com/Square-StellarNetwork/square-stellar/issues/6).
-The verifier is written here under Apache-2.0 from the pairing equation, not generated by
-snarkjs ([docs/decisions/groth16-verifier-license.md](docs/decisions/groth16-verifier-license.md)).
-
-### Square contracts
-
-Deployed with `contracts/script/deploy-testnet.sh` from `***`, with fixed salts so that a
-testnet reset reproduces the same addresses. Testnet parameters: challenge window 120 s,
-dispute window 300 s, finalize grace 600 s (so `settlement_horizon()` reads 1020 s),
-evaluator fee 0.5 %, platform fee 1 %, bond 10 % with a 1 USDC floor, three arbiters with
-threshold 2. The owner is `***`. The checklist a redeploy walks is
-[docs/deploy/README.md](docs/deploy/README.md).
-
-| Contract | Address |
-|---|---|
-| `square_job` | `***` |
-| `keeper_evaluator` | `***` |
-| `arbitration` | `***` |
-| `claim_market` | `***` |
-| `square_hook` | `***` |
-| `policy_registry` | `***` |
-| `compliance_module` | `***` |
-| `screening_registry` | `***` |
-
-`@squaresdk/core` carries these addresses (`deployments["stellar:testnet"]`), and
-`contracts/deployments/testnet.json` is the record they are copied from; a test asserts
-the two agree. The five settlement paths were run against them with real USDC and a
-provider registered as 8004 agent `***`; every transaction hash and the measured resource
-fee are in `***`, the dated record of that run.
+Square was first built for Arc (EVM) and Solana; this repository is its Stellar version.
+The design records, the circuit and the prover carry over; the on-chain layer, the SDK
+and the agent were written for Soroban. Code of the earlier version that the MVP does
+not use is still in the tree and marked as such in its own READMEs.
 
 ## License
 
