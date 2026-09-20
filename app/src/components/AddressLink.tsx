@@ -1,23 +1,24 @@
-import { getAddress, isAddress } from "viem";
-import { isZeroAddress, shortAddress, shortHash } from "@/lib/format";
-import { explorerUrl } from "@/lib/wagmi";
+import { isContractAddress, isStellarAddress } from "@squaresdk/core/stellar";
 
-const linkClass =
-  "break-all tabular-nums text-carbon underline decoration-fog underline-offset-4 transition-colors hover:decoration-carbon";
+import { shortAddress, shortHash } from "@/lib/format";
+import { explorerLink } from "@/lib/stellar";
 
-export function AddressLink({ address, full = false, label }: { address: string; full?: boolean; label?: string }) {
-  if (!isAddress(address) || isZeroAddress(address)) return <span className="text-ash">Not set</span>;
-  const checksum = getAddress(address);
-  const text = label ?? (full ? checksum : shortAddress(checksum));
-  if (!explorerUrl) {
+const linkClass = "break-all tabular-nums text-carbon underline decoration-fog underline-offset-4 transition-colors hover:decoration-carbon";
+
+/** A `G…` account or a `C…` contract, linked to the explorer's own page for it. */
+export function AddressLink({ address, full = false, label }: { address: string | null; full?: boolean; label?: string }) {
+  if (address === null || !isStellarAddress(address)) return <span className="text-ash">Not set</span>;
+  const text = label ?? (full ? address : shortAddress(address));
+  const href = explorerLink(isContractAddress(address) ? "contract" : "account", address);
+  if (href === null) {
     return (
-      <span className="break-all tabular-nums text-carbon" title={checksum}>
+      <span className="break-all tabular-nums text-carbon" title={address}>
         {text}
       </span>
     );
   }
   return (
-    <a href={`${explorerUrl}/address/${checksum}`} target="_blank" rel="noreferrer" className={linkClass} title={checksum}>
+    <a href={href} target="_blank" rel="noreferrer" className={linkClass} title={address}>
       {text}
     </a>
   );
@@ -25,7 +26,8 @@ export function AddressLink({ address, full = false, label }: { address: string;
 
 export function TxLink({ hash, full = false }: { hash: string; full?: boolean }) {
   const text = full ? hash : shortHash(hash);
-  if (!explorerUrl) {
+  const href = explorerLink("tx", hash);
+  if (href === null) {
     return (
       <span className="break-all tabular-nums text-carbon" title={hash}>
         {text}
@@ -33,7 +35,7 @@ export function TxLink({ hash, full = false }: { hash: string; full?: boolean })
     );
   }
   return (
-    <a href={`${explorerUrl}/tx/${hash}`} target="_blank" rel="noreferrer" className={linkClass} title={hash}>
+    <a href={href} target="_blank" rel="noreferrer" className={linkClass} title={hash}>
       {text}
     </a>
   );

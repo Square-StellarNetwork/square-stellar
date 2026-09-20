@@ -2,7 +2,7 @@
   "name": "@squaresdk/app",
   "version": "0.1.0",
   "private": true,
-  "description": "Reference web application for Square settlement on Arc.",
+  "description": "Reference web application for Square settlement on Stellar.",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev",
@@ -11,25 +11,20 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@creit.tech/stellar-wallets-kit": "2.6.0",
     "@squaresdk/core": "file:../packages/core",
-    "@squaresdk/did-resolver": "file:../packages/did-resolver",
-    "@squaresdk/policy": "file:../packages/policy",
+    "@stellar/stellar-sdk": "16.3.0",
     "@tanstack/react-query": "^5.90.0",
-    "canonicalize": "^2.1.0",
     "next": "^15.5.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "recharts": "^3.10.1",
-    "viem": "^2.56.0",
-    "wagmi": "^2.19.0"
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.0",
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "ajv": "^8.20.0",
-    "ajv-formats": "^3.0.1",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.6.0",

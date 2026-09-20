@@ -1,31 +1,36 @@
+import { Asset, Keypair, Networks } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { readAddressInput } from "./address";
 
-const checksummed = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+import { ADDRESS_FORMAT_MESSAGE, addressInputError, readAddressInput } from "./address";
+
+const account = Keypair.random().publicKey();
+const contract = new Asset("USDC", Keypair.random().publicKey()).contractId(Networks.TESTNET);
 
 describe("readAddressInput", () => {
-  it("accepts the checksummed and the all lowercase spellings", () => {
-    expect(readAddressInput(checksummed)).toEqual({ kind: "valid", address: checksummed });
-    expect(readAddressInput(checksummed.toLowerCase())).toEqual({ kind: "valid", address: checksummed });
+  it("accepts an account and a contract, and says which it is", () => {
+    expect(readAddressInput(account)).toEqual({ kind: "valid", address: account, addressKind: "account" });
+    expect(readAddressInput(contract)).toEqual({ kind: "valid", address: contract, addressKind: "contract" });
   });
 
-  it("accepts an uppercase 0X prefix, which viem alone rejects", () => {
-    expect(readAddressInput(`0X${checksummed.slice(2)}`)).toEqual({ kind: "valid", address: checksummed });
+  it("trims what a paste brings with it", () => {
+    expect(readAddressInput(`  ${account}\n`)).toEqual({ kind: "valid", address: account, addressKind: "account" });
   });
 
-  it("separates a failed checksum from a length or format error, and offers the checksummed form", () => {
-    expect(readAddressInput(`0x${checksummed.slice(2).toUpperCase()}`)).toEqual({ kind: "checksum", suggestion: checksummed });
-    expect(readAddressInput("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")).toEqual({ kind: "checksum", suggestion: checksummed });
-  });
-
-  it("calls anything that is not 40 hex characters malformed", () => {
-    expect(readAddressInput(checksummed.slice(0, -1))).toEqual({ kind: "malformed" });
-    expect(readAddressInput(`${checksummed}00`)).toEqual({ kind: "malformed" });
-    expect(readAddressInput("not an address")).toEqual({ kind: "malformed" });
-  });
-
-  it("reports an empty input as empty rather than as an error", () => {
+  it("is empty until something is typed", () => {
     expect(readAddressInput("")).toEqual({ kind: "empty" });
     expect(readAddressInput("   ")).toEqual({ kind: "empty" });
+    expect(addressInputError(readAddressInput(""))).toBeNull();
+  });
+
+  it("refuses a strkey whose checksum does not hold, which is what a typo makes", () => {
+    const typo = `${account.slice(0, -1)}${account.endsWith("A") ? "B" : "A"}`;
+    expect(readAddressInput(typo)).toEqual({ kind: "malformed" });
+    expect(addressInputError(readAddressInput(typo))).toBe(ADDRESS_FORMAT_MESSAGE);
+  });
+
+  it("refuses a lowercased strkey, a secret seed and an EVM address", () => {
+    expect(readAddressInput(account.toLowerCase())).toEqual({ kind: "malformed" });
+    expect(readAddressInput(Keypair.random().secret())).toEqual({ kind: "malformed" });
+    expect(readAddressInput("0x4f1397ea728005003cc351260bb5d7d00198da86")).toEqual({ kind: "malformed" });
   });
 });
