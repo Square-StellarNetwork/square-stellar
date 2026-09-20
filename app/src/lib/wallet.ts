@@ -4,6 +4,7 @@ import type { Signer } from "@squaresdk/core/stellar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { NETWORK_LABEL, NETWORK_PASSPHRASE } from "./stellar";
+import { thrownMessage, walletErrorMessage } from "./walletError";
 
 /**
  * The wallet connection (#39): Stellar Wallets Kit, which covers Freighter,
@@ -138,7 +139,9 @@ export function useWallet(): WalletState {
       setAddress(account);
       await readNetwork();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      // An extension that is installed but unreachable rejects here too, and
+      // it does it with an object; `String(cause)` made that "[object Object]".
+      setError(walletErrorMessage(cause) ?? thrownMessage(cause) ?? "The wallet did not answer.");
     } finally {
       setConnecting(false);
     }

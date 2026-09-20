@@ -62,7 +62,17 @@ export interface AnchorOptions {
   fetch?: typeof fetch | undefined;
 }
 
-const fetchOf = (options: AnchorOptions | undefined): typeof fetch => options?.fetch ?? globalThis.fetch;
+/**
+ * The `fetch` to use, bound so that it no longer matters where it is kept or
+ * how it is called. In a browser `fetch` is a method of the window and WebIDL
+ * refuses a call whose receiver is anything else, so holding it on a field and
+ * calling `this.doFetch(...)` — which is what `Sep6Client` does — raised
+ * "Failed to execute 'fetch' on 'Window': Illegal invocation" while the calls
+ * made with no receiver went through. Binding a function that is already bound
+ * does nothing, and a plain one ignores its receiver, so this is safe for a
+ * `fetch` a caller supplies as well.
+ */
+const fetchOf = (options: AnchorOptions | undefined): typeof fetch => (options?.fetch ?? globalThis.fetch).bind(globalThis);
 
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];

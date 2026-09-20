@@ -4,6 +4,7 @@ import {
   AnchorNeedsMoreError,
   authenticateWithAnchor,
   discoverAnchor,
+  payWithMemo,
   quotePrice,
   Sep6Client,
   sep38Asset,
@@ -11,6 +12,7 @@ import {
   type AnchorSession,
   type Sep6DepositInstructions,
   type Sep6Transaction,
+  type Sep6WithdrawInstructions,
   type SquareClient,
   type TransactionResult,
 } from "@squaresdk/core/stellar";
@@ -21,6 +23,7 @@ import { useCallback, useState } from "react";
 import { useSquare } from "./square";
 import { anchorDomain, anchorFiat, network, NETWORK_ID } from "./stellar";
 import { useWallet } from "./wallet";
+import { thrownMessage, walletErrorMessage } from "./walletError";
 
 const addressScVal = (address: string): xdr.ScVal => nativeToScVal(address, { type: "address" });
 
@@ -178,8 +181,12 @@ function anchorNeedsMore(error: AnchorNeedsMoreError): string {
 export function describeAnchorError(error: unknown): string {
   if (error instanceof AnchorNeedsMoreError) return anchorNeedsMore(error);
   if (error instanceof Error && error.name === "AnchorError") return error.message;
-  if (error instanceof Error) return error.message;
-  return "The anchor did not answer.";
+  // Signing in to the anchor is the wallet's work (SEP-10), so a wallet that
+  // has stopped answering fails here — and blaming the anchor for it sends
+  // someone looking in the wrong place.
+  const wallet = walletErrorMessage(error);
+  if (wallet !== null) return wallet;
+  return thrownMessage(error) ?? "The anchor did not answer.";
 }
 
 // ---- the trustline the anchor's asset needs --------------------------------
@@ -225,4 +232,125 @@ export async function openAnchorTrustline(client: SquareClient, address: string,
     args: [addressScVal(address)],
     parse: () => undefined,
   });
+}
+
+// ---- the way out: USDC back to fiat ---------------------------------------
+
+export type WithdrawStage = "idle" | "signing" | "asking" | "sending" | "waiting" | "done" | "handed-over" | "failed";
+
+export interface WithdrawState {
+  stage: WithdrawStage;
+  /** Where the anchor wants the asset sent, and with which memo. */
+  instructions: Sep6WithdrawInstructions | null;
+  transaction: Sep6Transaction | null;
+  /** The payment that sent the asset to the anchor. */
+  paymentHash: string | null;
+  needs: string[] | null;
+  error: string | null;
+}
+
+const WITHDRAW_IDLE: WithdrawState = { stage: "idle", instructions: null, transaction: null, paymentHash: null, needs: null, error: null };
+
+/**
+ * The mirror of a deposit: the anchor names an account and a memo, the asset
+ * is sent there as a classic payment carrying that memo, and the fiat leaves
+ * at the other end. The memo is the only thing that tells the anchor whose
+ * withdrawal a transfer is, which is why this leg is not the SAC `transfer`
+ * the rest of the app makes — a contract call cannot carry one.
+ */
+export function useWithdraw() {
+  const { address, signer } = useWallet();
+  const [state, setState] = useState<WithdrawState>(WITHDRAW_IDLE);
+
+  const reset = useCallback(() => setState(WITHDRAW_IDLE), []);
+
+  const start = useCallback(
+    async (amount: string, destination: string): Promise<void> => {
+      if (address === null || signer === undefined) {
+        setState({ ...WITHDRAW_IDLE, stage: "failed", error: "Connect a wallet first: the anchor signs you in with it." });
+        return;
+      }
+      let session: AnchorSession;
+      let asset: { code: string; issuer: string | undefined };
+      try {
+        setState({ ...WITHDRAW_IDLE, stage: "signing" });
+        const anchor = await discoverAnchor(anchorDomain, { expectedNetwork: network.networkPassphrase });
+        const found = depositableAsset(anchor);
+        if (found === null) throw new Error(`${anchorDomain} lists no asset to withdraw.`);
+        asset = { code: found.code, issuer: found.issuer };
+        session = await authenticateWithAnchor(anchor, signer);
+      } catch (error) {
+        setState({ ...WITHDRAW_IDLE, stage: "failed", error: describeAnchorError(error) });
+        return;
+      }
+
+      const sep6 = new Sep6Client(session);
+      let instructions: Sep6WithdrawInstructions;
+      try {
+        setState((current) => ({ ...current, stage: "asking" }));
+        instructions = await sep6.withdraw({ assetCode: asset.code, amount, type: "bank_account", dest: destination });
+      } catch (error) {
+        if (error instanceof AnchorNeedsMoreError) {
+          setState({ ...WITHDRAW_IDLE, stage: "failed", needs: error.fields, error: describeAnchorError(error) });
+          return;
+        }
+        setState({ ...WITHDRAW_IDLE, stage: "failed", error: describeAnchorError(error) });
+        return;
+      }
+
+      const to = instructions.accountId;
+      if (to === undefined) {
+        setState({ ...WITHDRAW_IDLE, stage: "failed", instructions, error: "The anchor named no account to send the asset to." });
+        return;
+      }
+
+      // A classic payment carrying the anchor's memo. Not the SAC `transfer`
+      // that `fund` makes: a memo is a field of the transaction, a contract
+      // call cannot carry one, and the memo is the only thing that tells the
+      // anchor whose withdrawal this is. Without it the asset arrives and
+      // belongs to nobody.
+      let paymentHash: string;
+      try {
+        setState((current) => ({ ...current, stage: "sending", instructions }));
+        const sent = await payWithMemo(network.horizonUrl, signer, {
+          networkPassphrase: network.networkPassphrase,
+          destination: to,
+          asset: { code: asset.code, issuer: asset.issuer },
+          amount,
+          memo: instructions.memo,
+          memoType: instructions.memoType,
+        });
+        paymentHash = sent.hash;
+      } catch (error) {
+        setState((current) => ({ ...current, stage: "failed", error: describeAnchorError(error) }));
+        return;
+      }
+
+      setState((current) => ({ ...current, stage: "waiting", paymentHash }));
+      const id = instructions.id;
+      if (id === undefined) {
+        setState((current) => ({ ...current, stage: "handed-over" }));
+        return;
+      }
+      try {
+        const settled = await sep6.follow(id, {
+          intervalMs: POLL_MS,
+          timeoutMs: POLL_TIMEOUT_MS,
+          onStatus: (transaction) => setState((current) => ({ ...current, transaction })),
+        });
+        setState((current) => ({ ...current, transaction: settled, stage: settled.status === "completed" ? "done" : "failed" }));
+      } catch {
+        setState((current) => ({ ...current, stage: "handed-over" }));
+      }
+    },
+    [address, signer],
+  );
+
+  return { state, start, reset };
+}
+
+/** Seven decimals, as a Stellar Asset Contract counts. */
+function toBaseUnits(amount: string): bigint {
+  const [whole, fraction = ""] = amount.trim().split(".");
+  return BigInt(`${whole || "0"}${fraction.padEnd(7, "0").slice(0, 7)}`);
 }
