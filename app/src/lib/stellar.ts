@@ -43,6 +43,9 @@ export const horizonUrl: string = override(process.env.NEXT_PUBLIC_HORIZON_URL) 
 /** stellar.expert covers the public networks; a local quickstart has no explorer. */
 export const explorerUrl: string | null = isTestnet ? STELLAR_TESTNET_EXPLORER_URL : null;
 
+/** Where an empty testnet account gets its first XLM; undefined on a network without one. */
+export const friendbotUrl: string | undefined = network.friendbotUrl;
+
 export type ExplorerSubject = "account" | "contract" | "tx";
 
 export function explorerLink(subject: ExplorerSubject, id: string): string | null {

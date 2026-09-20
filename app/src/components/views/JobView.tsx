@@ -95,10 +95,10 @@ function SetBudgetAction({ ctx, token, current }: { ctx: ActionContext; token: s
   const amount = value.trim().length === 0 ? null : parseAmount(value);
   return (
     <ActionCard
-      title="Agree the budget"
+      title="Name the price"
       description={
         <>
-          <span>The client or the provider may set it while the job is Open. It is what funding moves.</span>
+          <span>Either side may name the price while the job is still open. Nothing is committed by naming it: the client accepts by funding exactly this amount, and a price changed afterwards cannot be funded by surprise.</span>
           <span>{current > 0n ? `Currently ${formatAmount(current)} ${token}.` : "No budget set yet."}</span>
         </>
       }
@@ -122,14 +122,14 @@ function FundAction({ ctx, token, budget, balance }: { ctx: ActionContext; token
   const short = balance !== undefined && balance < budget;
   return (
     <ActionCard
-      title="Fund the escrow"
+      title="Fund the job"
       description={
         <>
           <span>
-            One signature moves {formatAmount(budget)} {token} into the kernel and fixes the fee basis points on the job. There is no approval step: the transfer is
-            authorized inside the same call.
+            One signature moves {formatAmount(budget)} {token} out of your wallet and into the contract. It is not ours and not the agent&apos;s while it
+            sits there: the contract releases it to the agent when the work is accepted, or back to you if you reject.
           </span>
-          <span>The expected budget is sent with it, so a budget changed in between is refused rather than funded by surprise.</span>
+          <span>Stellar has no separate approval step — the transfer is authorized inside the same signature — and the amount you are agreeing to is sent with the call, so a price changed in between is refused rather than charged.</span>
           {short ? (
             <span className="text-magenta">
               This wallet holds {formatAmount(balance ?? 0n)} {token}, less than the budget. {isTestnet ? "Friendbot funds a testnet account with XLM." : "Top it up before funding."}
@@ -150,41 +150,75 @@ function FundAction({ ctx, token, budget, balance }: { ctx: ActionContext; token
 }
 
 function SubmitAction({ ctx, deadline, now }: { ctx: ActionContext; deadline: number; now: number }) {
-  const [deliverable, setDeliverable] = useState("");
-  const [agent, setAgent] = useState("");
-  const digest = bytes32FromInput(deliverable);
-  const agentId = agent.trim().length === 0 ? null : Number.parseInt(agent.trim(), 10);
-  const agentError = agent.trim().length > 0 && (agentId === null || !Number.isInteger(agentId) || agentId < 0) ? "An agent id is a whole number." : null;
+  const [text, setText] = useState("");
+  const [hash, setHash] = useState("");
+  const [hashing, setHashing] = useState(false);
+  const typed = bytes32FromInput(hash);
+  const ready = text.trim().length > 0 || typed !== null;
+
+  // Hashing the work here is the point: the contract stores 32 bytes, and the
+  // person delivering should not have to find a tool to produce them.
+  async function send(): Promise<void> {
+    const { square } = ctx;
+    if (square === null || !ready) return;
+    setHashing(true);
+    try {
+      const digest = typed ?? (await digestOf(text.trim()));
+      await ctx.run("Submit", () => square.submit(ctx.id, digest));
+    } finally {
+      setHashing(false);
+    }
+  }
+
   return (
     <ActionCard
-      title="Submit the deliverable"
+      title="Deliver the work"
       description={
         <>
-          <span>The provider submits the 32-byte hash of the work. Only the hash is on chain; the work itself travels your own way.</span>
           <span>
-            The deadline is {formatTimestamp(deadline)} ({formatCountdown(deadline, now)}), the expiry less the settlement horizon.
+            Paste what you produced. The browser takes its SHA-256 — a 64-character fingerprint — and only that goes on chain, so the work
+            itself stays with you and is never uploaded here. Anyone holding the same file can recompute the fingerprint and see it matches.
+          </span>
+          <span>
+            Deliver before {formatTimestamp(deadline)} ({formatCountdown(deadline, now)}), after which the job expires and the client can take
+            the budget back. Once you deliver, the client has the challenge window to object, and then the payout is yours.
           </span>
         </>
       }
-      buttonLabel="Submit"
-      disabled={digest === null || agentError !== null}
+      buttonLabel={hashing ? "Hashing…" : "Deliver"}
+      disabled={!ready || hashing}
       ctx={ctx}
-      onClick={() => {
-        const { square, address } = ctx;
-        if (square === null || address === null || digest === null) return;
-        void ctx.run("Submit", () => square.submit(ctx.id, digest));
-      }}
+      onClick={() => void send()}
     >
       <Field
-        label="Deliverable hash"
-        htmlFor="deliverable"
-        error={deliverable.trim().length > 0 && digest === null ? "32 bytes of hex, with or without 0x." : null}
-        hint="sha256 or keccak256 of what you delivered."
+        label="What you delivered"
+        htmlFor="deliverable-text"
+        hint="Text, a link, a summary — whatever identifies the work. It is hashed in this browser and not sent anywhere."
       >
-        <input id="deliverable" className={inputClass} value={deliverable} onChange={(event) => setDeliverable(event.target.value)} placeholder="0x…" spellCheck={false} />
+        <textarea
+          id="deliverable-text"
+          rows={4}
+          className={`${inputClass} min-h-24`}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="Paste the deliverable, or a link to it"
+          disabled={typed !== null}
+        />
       </Field>
-      <Field label="Agent id (optional)" htmlFor="agent-id" error={agentError} hint="The 8004 agent you submit as. The hook checks that it is yours.">
-        <input id="agent-id" inputMode="numeric" className={inputClass} value={agent} onChange={(event) => setAgent(event.target.value)} placeholder="0" />
+      <Field
+        label="Or paste a fingerprint you already have"
+        htmlFor="deliverable-hash"
+        error={hash.trim().length > 0 && typed === null ? "A fingerprint is 64 hex characters (32 bytes), with or without a leading 0x." : null}
+        hint="For a file hashed elsewhere: shasum -a 256 the-file."
+      >
+        <input
+          id="deliverable-hash"
+          className={inputClass}
+          value={hash}
+          onChange={(event) => setHash(event.target.value)}
+          placeholder="0x…"
+          spellCheck={false}
+        />
       </Field>
     </ActionCard>
   );
@@ -259,8 +293,8 @@ function Actions({ detail, ctx, token, now, balance }: { detail: JobSummary; ctx
         title="Finalize"
         description={
           <>
-            <span>The challenge window closed and the client did not reject. The provider is credited the budget less the platform fee, and the fee goes to the kernel&apos;s owner.</span>
-            <span>Anyone may send this call — it names nobody — so the provider never depends on the client acting.</span>
+            <span>The window to object has passed and the client did not. The agent is credited the budget less the platform fee.</span>
+            <span>Anyone at all can send this, including you: the contract does not ask who you are. That is what stops a client settling an agent&apos;s payment by simply never acting.</span>
           </>
         }
         buttonLabel="Finalize"
@@ -298,7 +332,7 @@ function Actions({ detail, ctx, token, now, balance }: { detail: JobSummary; ctx
       <ActionCard
         key="refund"
         title="Claim the refund"
-        description="The job expired without a submission. Anyone may crank this; the budget is credited back to the client, who withdraws it."
+        description="The job passed its expiry with nothing delivered, so the escrow goes back. Anyone can send this; the money is credited to the client either way, who then withdraws it."
         buttonLabel="Claim refund"
         ctx={ctx}
         onClick={() => {
@@ -329,7 +363,7 @@ function Withdrawable({ ctx, token }: { ctx: ActionContext; token: string }) {
   return (
     <ActionCard
       title="Withdraw what you are owed"
-      description={`The kernel credits a ledger rather than pushing: ${formatAmount(owed)} ${token} is yours to take, from this job or any other.`}
+      description={`${formatAmount(owed)} ${token} is yours. The contract never pushes money at anyone — it waits until you ask for it, which is what stops a payment going to an address that cannot receive it.`}
       buttonLabel="Withdraw"
       ctx={ctx}
       onClick={() => {
