@@ -189,6 +189,68 @@ export function DepositView() {
         </ol>
       )}
 
+      {state.stage === "idle" ? null : (
+        <PanelCard
+          title={
+            state.stage === "done"
+              ? "The money arrived"
+              : state.stage === "handed-over"
+                ? "The anchor has it"
+                : state.stage === "failed"
+                  ? "The anchor stopped"
+                  : "Following the deposit"
+          }
+          description={state.price === null ? undefined : `Quoted at ${state.price} ${fiat} per ${asset?.code ?? "unit"}.`}
+        >
+          <dl className="flex flex-col gap-3 text-caption">
+            {state.transaction === null ? null : (
+              <>
+                <Row label="Status">
+                  <span className="text-carbon">{STATUS_COPY[state.transaction.status] ?? "The anchor is working on it."}</span>{" "}
+                  <span className="text-ash">({state.transaction.status})</span>
+                </Row>
+                {state.transaction.amountIn === undefined ? null : (
+                  <Row label={`${fiat} in`}>{state.transaction.amountIn}</Row>
+                )}
+                {state.transaction.amountOut === undefined ? null : (
+                  <Row label={`${asset?.code ?? "Asset"} out`}>{state.transaction.amountOut}</Row>
+                )}
+                {state.transaction.amountFee === undefined ? null : <Row label="Anchor fee">{state.transaction.amountFee}</Row>}
+                {state.transaction.stellarTransactionId === undefined ? null : (
+                  <Row label="On chain">
+                    <TxLink hash={state.transaction.stellarTransactionId} />
+                  </Row>
+                )}
+                {state.transaction.moreInfoUrl === undefined ? null : (
+                  <Row label={state.transaction.status === "pending_user_transfer_start" ? "Send the money here" : "The anchor's page"}>
+                    <a className="underline" href={state.transaction.moreInfoUrl} target="_blank" rel="noreferrer">
+                      {state.transaction.status === "pending_user_transfer_start" ? "open the anchor's page and play the bank" : "open"}
+                    </a>
+                  </Row>
+                )}
+              </>
+            )}
+            {state.instructions?.how === undefined ? null : <Row label="How to send it">{state.instructions.how}</Row>}
+            {state.error === null ? null : <Row label="What happened">{state.error}</Row>}
+          </dl>
+
+          {state.stage === "handed-over" ? (
+            <p className="mt-4 text-caption text-graphite">
+              Your side is done: the anchor has taken the {fiat} and owes the payout. It can take a while to send it, and it is not waited on here —
+              the balance in step 2 is what says when it lands, and it refreshes by itself.
+            </p>
+          ) : null}
+          {state.stage === "done" || state.stage === "handed-over" ? (
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <PrimaryButton size="sm" href="/new" disabled={!trustlineOpen || (trustline.data?.balance ?? 0n) === 0n}>
+                Open a job with it
+              </PrimaryButton>
+              <span className="text-caption text-ash">No {fiat} moved: this anchor simulates the bank leg.</span>
+            </div>
+          ) : null}
+        </PanelCard>
+      )}
+
       <PanelCard
         title={`Take it back out as ${fiat}`}
         description={`The same rail in reverse: the anchor names an account and a memo, the asset goes there as an ordinary transfer, and the ${fiat} leaves at the other end. On this sandbox no ${fiat} arrives anywhere — the transfer on Stellar is real.`}
@@ -262,68 +324,6 @@ export function DepositView() {
           )}
         </div>
       </PanelCard>
-
-      {state.stage === "idle" ? null : (
-        <PanelCard
-          title={
-            state.stage === "done"
-              ? "The money arrived"
-              : state.stage === "handed-over"
-                ? "The anchor has it"
-                : state.stage === "failed"
-                  ? "The anchor stopped"
-                  : "Following the deposit"
-          }
-          description={state.price === null ? undefined : `Quoted at ${state.price} ${fiat} per ${asset?.code ?? "unit"}.`}
-        >
-          <dl className="flex flex-col gap-3 text-caption">
-            {state.transaction === null ? null : (
-              <>
-                <Row label="Status">
-                  <span className="text-carbon">{STATUS_COPY[state.transaction.status] ?? "The anchor is working on it."}</span>{" "}
-                  <span className="text-ash">({state.transaction.status})</span>
-                </Row>
-                {state.transaction.amountIn === undefined ? null : (
-                  <Row label={`${fiat} in`}>{state.transaction.amountIn}</Row>
-                )}
-                {state.transaction.amountOut === undefined ? null : (
-                  <Row label={`${asset?.code ?? "Asset"} out`}>{state.transaction.amountOut}</Row>
-                )}
-                {state.transaction.amountFee === undefined ? null : <Row label="Anchor fee">{state.transaction.amountFee}</Row>}
-                {state.transaction.stellarTransactionId === undefined ? null : (
-                  <Row label="On chain">
-                    <TxLink hash={state.transaction.stellarTransactionId} />
-                  </Row>
-                )}
-                {state.transaction.moreInfoUrl === undefined ? null : (
-                  <Row label={state.transaction.status === "pending_user_transfer_start" ? "Send the money here" : "The anchor's page"}>
-                    <a className="underline" href={state.transaction.moreInfoUrl} target="_blank" rel="noreferrer">
-                      {state.transaction.status === "pending_user_transfer_start" ? "open the anchor's page and play the bank" : "open"}
-                    </a>
-                  </Row>
-                )}
-              </>
-            )}
-            {state.instructions?.how === undefined ? null : <Row label="How to send it">{state.instructions.how}</Row>}
-            {state.error === null ? null : <Row label="What happened">{state.error}</Row>}
-          </dl>
-
-          {state.stage === "handed-over" ? (
-            <p className="mt-4 text-caption text-graphite">
-              Your side is done: the anchor has taken the {fiat} and owes the payout. It can take a while to send it, and it is not waited on here —
-              the balance in step 2 is what says when it lands, and it refreshes by itself.
-            </p>
-          ) : null}
-          {state.stage === "done" || state.stage === "handed-over" ? (
-            <div className="mt-6 flex flex-wrap items-center gap-3">
-              <PrimaryButton size="sm" href="/new" disabled={!trustlineOpen || (trustline.data?.balance ?? 0n) === 0n}>
-                Open a job with it
-              </PrimaryButton>
-              <span className="text-caption text-ash">No {fiat} moved: this anchor simulates the bank leg.</span>
-            </div>
-          ) : null}
-        </PanelCard>
-      )}
     </div>
   );
 }
