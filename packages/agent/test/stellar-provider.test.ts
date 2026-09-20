@@ -225,3 +225,21 @@ describe("the provider loop", () => {
     expect(timed.kernel.calls.filter((c) => c === "createdJobs").length).toBe(ticks);
   });
 });
+
+describe("the price", () => {
+  it("leaves alone a job funded below the capability's price, before the handler runs", async () => {
+    let runs = 0;
+    const handlers = { summarise: async () => `run ${++runs}` };
+    const { kernel, provider, events } = setup(new FakeKernel(), handlers, { minimumBudgetFor: (id: string) => (id === "summarise" ? 25_000_000n : undefined) });
+    const cheap = kernel.create(CLIENT, AGENT, "underpaid");
+    const fair = kernel.create(CLIENT, AGENT, "fairly paid");
+    kernel.fund(cheap, 24_999_999n);
+    kernel.fund(fair, 25_000_000n);
+    await provider.tick();
+    expect(provider.job(cheap)).toMatchObject({ done: true, capability: "summarise", attempts: 0, status: "Funded" });
+    expect(events.find((e) => e.type === "unserviceable")).toMatchObject({ jobId: cheap, reason: expect.stringMatching(/funded with 24999999 but summarise costs 25000000/) });
+    expect(provider.job(fair)).toMatchObject({ status: "Submitted", content: "run 1" });
+    expect(runs).toBe(1);
+    expect(kernel.calls.filter((c) => c === `submit ${cheap}`)).toEqual([]);
+  });
+});

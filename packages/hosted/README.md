@@ -152,7 +152,8 @@ a host that composes its own agent; `runCapability` is the model loop alone;
 With `SQUARE_NETWORK=stellar:testnet` (or `stellar:local`) the same configuration runs
 through `@squaresdk/agent/stellar`: the host watches the kernel for jobs created for its
 key, runs each capability's `instructions` through the model on the job's description,
-submits, finalizes after the challenge window and withdraws. `agentId` may be left out
+submits, finalizes after the challenge window and withdraws; a job funded below the
+capability's `price` is left alone. `agentId` may be left out
 (no 8004 registry yet; an own key is then sealed under the agent's `name`:
 `square-hosted seal Atlas`), and a `tools`, `delegation` or `compliance` block is
 refused rather than half-honoured (phase 2).

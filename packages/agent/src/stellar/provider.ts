@@ -66,6 +66,13 @@ export interface ProviderOptions {
    * alone, with an `unserviceable` event.
    */
   defaultCapability?: string | undefined;
+  /**
+   * The least a job may be funded with for a capability, in base units, or
+   * undefined when any funded amount will do. A job funded below it is left
+   * alone (`unserviceable`) before the handler runs: the kernel enforces no
+   * price, so this is where the agent's price is.
+   */
+  minimumBudgetFor?: ((capability: string) => bigint | undefined) | undefined;
   /** Where to start reading job creations the first time; the latest ledger when omitted (only jobs from now on). */
   startLedger?: number | undefined;
   store?: ProviderStore | undefined;
@@ -114,7 +121,8 @@ export function memoryStore(): ProviderStore {
  * Everything it knows is in `state`, kept by the store, so a restart resumes:
  * a handler's output that never reached the chain is submitted on the next
  * tick rather than computed again, and a handler that failed is retried up
- * to `maxAttempts` while the job is still Funded. What the client does
+ * to `maxAttempts` while the job is still Funded. A job funded below the
+ * capability's price (`minimumBudgetFor`) is left alone. What the client does
  * (`reject`) and what time does (`expired`) are read off the chain each tick,
  * never assumed.
  */
@@ -212,6 +220,13 @@ export function createProvider(options: ProviderOptions): Provider {
           if ("reason" in chosen) {
             touch(job, { done: true, error: chosen.reason });
             emit({ type: "unserviceable", jobId, reason: chosen.reason });
+            return;
+          }
+          const minimum = options.minimumBudgetFor?.(chosen.capability);
+          if (minimum !== undefined && record.budget < minimum) {
+            const reason = `funded with ${record.budget} but ${chosen.capability} costs ${minimum} (base units)`;
+            touch(job, { done: true, capability: chosen.capability, error: reason });
+            emit({ type: "unserviceable", jobId, reason });
             return;
           }
           try {
