@@ -1,0 +1,14 @@
+# Every line here is honest code or prose from the product path and must stay
+# writable. A pattern that fires on one of these makes the real thing
+# unwritable, which is how a guard gets deleted instead of fixed. The
+# self-test fails if any pattern matches a line here.
+<input placeholder="Job id or address" />
+<textarea placeholder="Paste the deliverable text" />
+"w-full rounded-lg bg-mist placeholder:text-ash focus:border-fog"
+ * with placeholder options (its constructor only stores them and builds an
+const smocker = new Smocker();
+https://github.com/blend-capital/blend-utils/blob/main/testnet.contracts.json
+const todoList = items.filter(done);
+export type StepState = "todo" | "done" | "error";
+const address = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+const salt = "0x0000000000000000000000000000000000000000000000000000000000000001";

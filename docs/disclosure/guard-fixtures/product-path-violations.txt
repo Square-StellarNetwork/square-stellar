@@ -1,0 +1,23 @@
+# Every line here must be caught by a pattern in docs/disclosure/mock-patterns.txt.
+# If one stops being caught, a pattern has been weakened or deleted, and the
+# self-test fails before the guard scans anything.
+const client = new MockSquareClient();
+export function mockJob(): Job {
+  // mocked for now
+  return dummyValue;
+const stubbed = () => 0;
+const fakeSigner = keypairSigner(Keypair.random(), passphrase);
+class FakeAnchor implements Anchor {}
+<p>Lorem ipsum dolor sit amet</p>
+| Fee | TBD |
+password: "changeme",
+const key = "YOUR_API_KEY";
+See <your-domain> for the callback.
+const callback = "https://example.com/sep24";
+const issuer = "https://example.org";
+// TODO: read this from the deployment record
+// FIXME: the window is wrong
+// XXX this cannot be right
+// HACK: round-trip through a string
+const recipient = "0x0000000000000000000000000000000000000000";
+const deliverable = "0x0000000000000000000000000000000000000000000000000000000000000000";

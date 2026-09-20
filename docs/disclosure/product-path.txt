@@ -1,0 +1,57 @@
+# The product path — the single source for what the mock guard scans.
+#
+# Judging criterion 2 is "deployed on Stellar Testnet with real functionality
+# — not mocked or hardcoded". That applies to what a judge can reach: the
+# deployed contract, the SDK the app and the agent talk to it through, the
+# app, the agent runtime and the website. Those paths are listed here and
+# `.github/scripts/check-product-path.sh` refuses a forbidden pattern in any
+# of them.
+#
+# What is deliberately NOT here, and why:
+#
+#   the earlier version's code   Square was built for Arc (EVM) and Solana
+#                                first, and that code is still in the tree,
+#                                marked as such in its own READMEs (see the
+#                                repository README, "Layout"). It is not
+#                                deployed, not demonstrated and not reachable
+#                                from the product; holding it to the product's
+#                                rule would only invite deleting evidence of
+#                                where the project came from.
+#
+#   tests and test support       A test double in a test is how a test is
+#                                written. The rule is about what ships:
+#                                nothing on the path below may contain one.
+#                                docs/disclosure/mock-audit.md records that
+#                                boundary as the decision it is.
+#
+#   docs/                        Prose about mocks — this file, the audit,
+#                                the decision records — has to be able to say
+#                                the word.
+#
+# FORMAT
+#   One path prefix per line, matched against the repository-relative path of
+#   every tracked file. A file matches if its path starts with the prefix.
+#   Lines starting with '#' are comments; blank lines are ignored.
+
+# The deployed contract and what it is built from.
+contracts/contracts/
+contracts/common/
+
+# How it is deployed.
+contracts/script/deploy.sh
+contracts/script/deploy-local.sh
+contracts/script/deploy-testnet.sh
+
+# The SDK the app, the agent and the services reach the chain through.
+packages/core/src/stellar/
+
+# The agent runtime and its host.
+packages/agent/src/
+packages/hosted/src/
+
+# The hardening the runtime depends on: SEP-53 signing and RPC failover.
+packages/hardening/src/
+
+# The client's app and the website.
+app/src/
+site/src/
