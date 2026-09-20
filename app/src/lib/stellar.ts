@@ -89,7 +89,7 @@ export const anchorFiat: string = override(process.env.NEXT_PUBLIC_ANCHOR_FIAT) 
 
 export const DOCS_URL = "https://github.com/Square-StellarNetwork/square-stellar/tree/main/docs/design";
 export const REPO_URL = "https://github.com/Square-StellarNetwork/square-stellar";
-export const SITE_URL = "https://square-protocol.vercel.app";
+export const SITE_URL = "https://square.up.railway.app";
 
 /**
  * The contract ids. They come from `@squaresdk/core`'s compiled record for
