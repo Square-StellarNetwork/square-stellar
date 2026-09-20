@@ -6,16 +6,17 @@ import { deployment, isTestnet, NETWORK_LABEL } from "@/lib/stellar";
 import { AddressLink } from "./AddressLink";
 import { StellarMark } from "./marks";
 
+// The contracts the record names: the kernel always; the rest as they are deployed (the MVP deploys the kernel alone).
 const contracts =
   deployment === null
     ? []
-    : ([
+    : [
         { label: "square_job", address: deployment.squareJob },
         { label: "keeper_evaluator", address: deployment.keeperEvaluator },
         { label: "arbitration", address: deployment.arbitration },
         { label: "claim_market", address: deployment.claimMarket },
         { label: "square_hook", address: deployment.squareHook },
-      ] as const);
+      ].filter((contract): contract is { label: string; address: string } => contract.address !== undefined);
 
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
