@@ -183,11 +183,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "22"
-      - name: Build path dependencies
-        run: |
-          for dep in packages/did-resolver packages/core packages/policy; do
-            (cd "$dep" && npm install --install-links && npm run build)
-          done
+      - name: Build the core the app reads the chain through
+        run: (cd packages/core && npm install --install-links && npm run build)
       - name: Install, typecheck, test, build
         working-directory: app
         run: |

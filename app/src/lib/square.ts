@@ -1,80 +1,70 @@
 "use client";
 
-import {
-  arbitrationAbi,
-  createScreenerClient,
-  createSquareClient,
-  JobStatus,
-  keeperEvaluatorAbi,
-  squareHookAbi,
-  squareJobAbi,
-  type SquareClient,
-} from "@squaresdk/core";
+import { createSquareClient, type SquareClient, type SquareEvent } from "@squaresdk/core/stellar";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { zeroAddress, type Address, type Hex } from "viem";
-import { useWalletClient } from "wagmi";
-import { keeperEvaluates } from "./actions";
+
 import { chainClockOffset, chainNow } from "./clock";
-import { activeChain, deployment, publicClient } from "./wagmi";
+import {
+  challengeEnd,
+  currentWindow,
+  evaluatorFeeBp,
+  getJobRecord,
+  isDisputed,
+  jobCounter,
+  netPayout,
+  paymentToken,
+  platformFeeBp,
+  settlementHorizon,
+  tokenBalance,
+  totalWithdrawable,
+  treasury,
+  withdrawable,
+  type JobRecord,
+  type KeeperWindow,
+} from "./contracts";
+import { deployment, horizonUrl, NETWORK_ID, rpcUrl, tokenLabel } from "./stellar";
+import { useWallet } from "./wallet";
 
+/** Every read refreshes on this interval, as the EVM app's did. */
 export const POLL_MS = 10_000;
+/** How many of the newest jobs the dashboard reads. */
 export const RECENT_JOB_WINDOW = 50;
+/**
+ * How far back `getEvents` is asked to look when the deployment does not say
+ * which ledger it started at. A Soroban RPC keeps about a day of events, and a
+ * ledger closes about every five seconds.
+ */
+const EVENT_LOOKBACK_LEDGERS = 17_000;
 
-const chainId = activeChain.id;
-const readOnlyClient = createSquareClient({ publicClient, deployment });
+const readOnly: SquareClient | null = deployment === null ? null : createSquareClient({ deployment, rpc: rpcUrl });
+
+/** The client every read uses; null until this build names a deployment. */
+export function useSquareRead(): SquareClient | null {
+  return readOnly;
+}
 
 /**
- * The screener the funding step asks for a party the hook would refuse
- * (square#368), when this page names one. Without it, on a hook that
- * screens, `fund` stops before sending and names the party instead of
- * reverting on chain.
+ * The client writes go through: the same deployment with the connected
+ * wallet's signer. Null while no wallet is connected, which is what every
+ * action gate already checks.
  */
-export const SCREENER_URL: string | null = (process.env.NEXT_PUBLIC_SCREENER_URL ?? "").trim().replace(/\/+$/, "") || null;
-const screener = SCREENER_URL === null ? undefined : createScreenerClient({ url: SCREENER_URL });
-
-export function useSquare(): SquareClient {
-  const { data: walletClient } = useWalletClient();
+export function useSquare(): SquareClient | null {
+  const { signer } = useWallet();
   return useMemo(() => {
-    if (!walletClient) return readOnlyClient;
-    return createSquareClient({ publicClient, walletClient, deployment, ...(screener ? { screener } : {}) });
-  }, [walletClient]);
+    if (deployment === null) return null;
+    if (signer === undefined) return readOnly;
+    return createSquareClient({ deployment, rpc: rpcUrl, signer });
+  }, [signer]);
 }
 
-export type JobRecord = Awaited<ReturnType<SquareClient["getJobRecord"]>>;
-export type Listing = Awaited<ReturnType<SquareClient["listing"]>>;
-export type ArbitrationDispute = Awaited<ReturnType<SquareClient["disputeOf"]>>;
-
-export interface KeeperDispute {
-  disputer: Address;
-  disputedAt: number;
-  resolved: boolean;
-}
-
-export interface KeeperWindow {
-  effectiveFrom: number;
-  challengeWindow: number;
-  disputeWindow: number;
-}
-
-export interface JobSummary {
+/** A job as the lists show it: its record, its id, and the two window facts. */
+export type JobSummary = JobRecord & {
   id: bigint;
-  client: Address;
-  provider: Address;
-  evaluator: Address;
-  budget: bigint;
-  status: number;
-  createdAt: number;
-  fundedAt: number;
-  expiredAt: number;
-  submittedAt: number;
+  /** When the challenge window closes; 0 when this job has none. */
   challengeEnd: number;
   disputed: boolean;
-  platformFeeBP: number;
-  evaluatorFeeBP: number;
-  providerBps: number;
-  settlementHorizon: number;
-}
+};
 
 export interface JobsSnapshot {
   counter: bigint;
@@ -82,255 +72,184 @@ export interface JobsSnapshot {
   scanned: number;
 }
 
-async function readJobSummary(id: bigint): Promise<JobSummary> {
-  const record = await readOnlyClient.getJobRecord(id);
-  let challengeEnd = 0;
-  let disputed = false;
-  if (record.status === JobStatus.Submitted && keeperEvaluates(record, deployment.keeperEvaluator)) {
-    [challengeEnd, disputed] = await Promise.all([readOnlyClient.challengeEndsAt(id), readOnlyClient.isDisputed(id)]);
-  }
-  return {
-    id,
-    client: record.client,
-    provider: record.provider,
-    evaluator: record.evaluator,
-    budget: record.budget,
-    status: record.status,
-    createdAt: record.createdAt,
-    fundedAt: record.fundedAt,
-    expiredAt: record.expiredAt,
-    submittedAt: record.submittedAt,
-    challengeEnd,
-    disputed,
-    platformFeeBP: record.platformFeeBP,
-    evaluatorFeeBP: record.evaluatorFeeBP,
-    providerBps: record.providerBps,
-    settlementHorizon: record.settlementHorizon,
-  };
+/** Whether the keeper evaluator holds this job's window, so it has one. */
+export function keeperHoldsTheWindow(record: JobRecord): boolean {
+  return deployment !== null && record.evaluator === deployment.keeperEvaluator;
 }
 
+async function summary(client: SquareClient, id: bigint): Promise<JobSummary> {
+  const record = await getJobRecord(client, id);
+  if (record.status !== "Submitted" || !keeperHoldsTheWindow(record)) {
+    return { ...record, id, challengeEnd: 0, disputed: false };
+  }
+  const [end, disputed] = await Promise.all([challengeEnd(client, id), isDisputed(client, id)]);
+  return { ...record, id, challengeEnd: end, disputed };
+}
+
+/**
+ * The newest jobs. Their ids come from the kernel's own `JobCreated` events
+ * (`getEvents`), which is what the MVP reads instead of an indexer, and each
+ * job is then read from the contract.
+ */
 export function useJobs(limit = RECENT_JOB_WINDOW) {
   return useQuery({
-    queryKey: ["jobs", chainId, limit],
+    queryKey: ["jobs", NETWORK_ID, limit],
+    enabled: readOnly !== null,
     refetchInterval: POLL_MS,
     queryFn: async (): Promise<JobsSnapshot> => {
-      const counter = await readOnlyClient.jobCounter();
-      const ids: bigint[] = [];
-      for (let id = counter; id >= 1n && ids.length < limit; id -= 1n) ids.push(id);
-      const jobs = await Promise.all(ids.map((id) => readJobSummary(id)));
+      const client = readOnly;
+      if (client === null) throw new Error("no deployment");
+      const [counter, ids] = await Promise.all([jobCounter(client), createdJobIds(client, limit)]);
+      const jobs = await Promise.all(ids.map((id) => summary(client, id)));
       return { counter, jobs, scanned: ids.length };
     },
   });
 }
 
-export interface JobDetail {
-  id: bigint;
-  record: JobRecord;
-  challengeEnd: number;
-  disputed: boolean;
-  keeperDispute: KeeperDispute;
-  dispute: ArbitrationDispute;
-  listing: Listing;
-  /**
-   * The client's buyer list root (square#30); zero when it approved nobody. Null
-   * when the market could not answer, which is what a market deployed before
-   * square#30 does, since it has no registry to read.
-   */
-  buyerRoot: Hex | null;
-  netPayout: bigint;
-  payee: Address;
-  /** The ERC-8004 agent the submit bound, or null when none was. Agent 0 is an agent (#300). */
-  agentId: bigint | null;
-  expiryRecorded: boolean;
-  bond: bigint;
-  arbiters: readonly Address[];
-  threshold: number;
+/** The job ids the kernel's `JobCreated` events carry, newest first. */
+async function createdJobIds(client: SquareClient, limit: number): Promise<bigint[]> {
+  const latest = await client.latestLedger();
+  const startLedger = Math.max(1, deployment?.deployLedger ?? latest - EVENT_LOOKBACK_LEDGERS);
+  const response = await client.server.getEvents({
+    startLedger,
+    filters: [{ type: "contract", contractIds: [client.resolve("square_job").id], topics: [["*", "*"]] }],
+    limit: 1000,
+  });
+  const ids = client
+    .decodeEvents(response)
+    .filter((event: SquareEvent) => event.name === "job_created")
+    .map((event: SquareEvent) => event.topics[1])
+    .filter((id): id is bigint => typeof id === "bigint");
+  return [...new Set(ids)].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0)).slice(0, limit);
 }
+
+export type JobDetail = JobSummary & {
+  /** What `complete` would credit the payee side, at the job's snapshotted fees. */
+  netPayout: bigint;
+};
 
 export function useJob(id: bigint | null) {
   return useQuery({
-    queryKey: ["job", chainId, id === null ? null : id.toString()],
-    enabled: id !== null,
+    queryKey: ["job", NETWORK_ID, id === null ? null : id.toString()],
+    enabled: readOnly !== null && id !== null,
     refetchInterval: POLL_MS,
     queryFn: async (): Promise<JobDetail | null> => {
-      if (id === null) return null;
-      const counter = await readOnlyClient.jobCounter();
+      const client = readOnly;
+      if (client === null || id === null) return null;
+      const counter = await jobCounter(client);
       if (id < 1n || id > counter) return null;
-      const record = await readOnlyClient.getJobRecord(id);
-      const keeperHoldsTheWindow = keeperEvaluates(record, deployment.keeperEvaluator);
-      const [challengeEnd, disputed, keeperDispute, dispute, listing, buyerRoot, netPayout, payee, agentId, expiryRecorded, bond] =
-        await Promise.all([
-          keeperHoldsTheWindow ? readOnlyClient.challengeEndsAt(id) : Promise.resolve(0),
-          readOnlyClient.isDisputed(id),
-          publicClient.readContract({
-            abi: keeperEvaluatorAbi,
-            address: deployment.keeperEvaluator,
-            functionName: "disputeOf",
-            args: [id],
-          }),
-          readOnlyClient.disputeOf(id),
-          readOnlyClient.listing(id),
-          readOnlyClient.buyerRootOf(record.client).catch((): null => null),
-          readOnlyClient.netPayout(id),
-          readOnlyClient.payeeOf(id),
-          readOnlyClient.agentOf(id),
-          publicClient.readContract({
-            abi: squareHookAbi,
-            address: deployment.squareHook,
-            functionName: "recorded",
-            args: [id],
-          }),
-          readOnlyClient.bondFor(record.budget),
-        ]);
-      let arbiters: readonly Address[] = [];
-      let threshold = 0;
-      if (dispute.disputedAt !== 0) {
-        const [set, required] = await publicClient.readContract({
-          abi: arbitrationAbi,
-          address: deployment.arbitration,
-          functionName: "arbiterSet",
-          args: [dispute.setVersion],
-        });
-        arbiters = set;
-        threshold = required;
-      }
-      return {
-        id,
-        record,
-        challengeEnd,
-        disputed,
-        keeperDispute: {
-          disputer: keeperDispute.disputer,
-          disputedAt: Number(keeperDispute.disputedAt),
-          resolved: keeperDispute.resolved,
-        },
-        dispute,
-        listing,
-        buyerRoot,
-        netPayout,
-        payee,
-        agentId,
-        expiryRecorded,
-        bond,
-        arbiters,
-        threshold,
-      };
+      const base = await summary(client, id);
+      const net = await netPayout(client, id);
+      return { ...base, netPayout: net };
     },
   });
 }
 
 export interface NetworkInfo {
-  blockNumber: bigint;
+  ledger: number;
+  protocolVersion: number;
   chainOffset: number;
   jobCounter: bigint;
   settlementHorizon: number;
   window: KeeperWindow;
-  platformFeeBP: number;
-  evaluatorFeeBP: number;
-  maxTotalFeeBP: bigint;
-  treasury: Address;
+  platformFeeBp: number;
+  evaluatorFeeBp: number;
+  treasury: string;
   totalWithdrawable: bigint;
-  arbitrationAddress: Address;
-  arbiterVersion: number;
-  arbiters: readonly Address[];
-  threshold: number;
-  bondBps: number;
-  minBond: bigint;
-  complianceModule: Address;
+  paymentToken: string;
 }
 
+/**
+ * The chain head and the settings the pages show. The ledger's close time is
+ * the chain clock the countdowns run on, as the EVM app used the block
+ * timestamp.
+ */
 export function useNetwork() {
   return useQuery({
-    queryKey: ["network", chainId],
+    queryKey: ["network", NETWORK_ID],
+    enabled: readOnly !== null,
     refetchInterval: POLL_MS,
     queryFn: async (): Promise<NetworkInfo> => {
-      const squareJob = { abi: squareJobAbi, address: deployment.squareJob } as const;
-      const keeper = { abi: keeperEvaluatorAbi, address: deployment.keeperEvaluator } as const;
-      const arbitration = { abi: arbitrationAbi, address: deployment.arbitration } as const;
-      const hook = { abi: squareHookAbi, address: deployment.squareHook } as const;
-      const [
-        block,
-        jobCounter,
-        settlementHorizon,
-        window,
-        platformFeeBP,
-        evaluatorFeeBP,
-        maxTotalFeeBP,
-        treasury,
-        totalWithdrawable,
-        arbitrationAddress,
-        arbiterVersion,
-        bondParameters,
-        complianceModule,
-      ] = await Promise.all([
-        publicClient.getBlock(),
-        readOnlyClient.jobCounter(),
-        readOnlyClient.settlementHorizon(),
-        publicClient.readContract({ ...keeper, functionName: "currentWindow" }),
-        publicClient.readContract({ ...squareJob, functionName: "platformFeeBP" }),
-        publicClient.readContract({ ...squareJob, functionName: "evaluatorFeeBP" }),
-        publicClient.readContract({ ...squareJob, functionName: "MAX_TOTAL_FEE_BP" }),
-        publicClient.readContract({ ...squareJob, functionName: "platformTreasury" }),
-        publicClient.readContract({ ...squareJob, functionName: "totalWithdrawable" }),
-        publicClient.readContract({ ...keeper, functionName: "arbitration" }),
-        publicClient.readContract({ ...arbitration, functionName: "currentVersion" }),
-        publicClient.readContract({ ...arbitration, functionName: "bondParameters" }),
-        publicClient.readContract({ ...hook, functionName: "complianceModule" }),
+      const client = readOnly;
+      if (client === null) throw new Error("no deployment");
+      const head = await client.server.getLatestLedger();
+      const [closedAt, counter, horizon, window, platform, evaluator, treasuryAddress, withdrawableTotal, token] = await Promise.all([
+        ledgerClosedAt(client, head.sequence),
+        jobCounter(client),
+        settlementHorizon(client),
+        currentWindow(client),
+        platformFeeBp(client),
+        evaluatorFeeBp(client),
+        treasury(client),
+        totalWithdrawable(client),
+        paymentToken(client),
       ]);
-      const [arbiters, threshold] = await publicClient.readContract({
-        ...arbitration,
-        functionName: "arbiterSet",
-        args: [arbiterVersion],
-      });
-      const [bondBps, minBond] = bondParameters;
       return {
-        blockNumber: block.number,
-        chainOffset: chainClockOffset(Number(block.timestamp), Date.now()),
-        jobCounter,
-        settlementHorizon,
-        window: {
-          effectiveFrom: Number(window.effectiveFrom),
-          challengeWindow: Number(window.challengeWindow),
-          disputeWindow: Number(window.disputeWindow),
-        },
-        platformFeeBP,
-        evaluatorFeeBP,
-        maxTotalFeeBP,
-        treasury,
-        totalWithdrawable,
-        arbitrationAddress,
-        arbiterVersion,
-        arbiters,
-        threshold,
-        bondBps,
-        minBond,
-        complianceModule,
+        ledger: head.sequence,
+        protocolVersion: Number(head.protocolVersion),
+        chainOffset: chainClockOffset(closedAt, Date.now()),
+        jobCounter: counter,
+        settlementHorizon: horizon,
+        window,
+        platformFeeBp: platform,
+        evaluatorFeeBp: evaluator,
+        treasury: treasuryAddress,
+        totalWithdrawable: withdrawableTotal,
+        paymentToken: token,
       };
     },
   });
 }
 
-export interface Positions {
-  withdrawable: bigint;
-  bondWithdrawable: bigint;
-  usdcBalance: bigint;
+/** When the ledger closed, in seconds: the chain's own clock. */
+async function ledgerClosedAt(client: SquareClient, sequence: number): Promise<number> {
+  const ledgers = await client.server.getLedgers({ startLedger: sequence, pagination: { limit: 1 } });
+  const closed = ledgers.ledgers[0]?.ledgerCloseTime;
+  if (closed === undefined) throw new Error(`ledger ${sequence} did not report its close time`);
+  return Number(closed);
 }
 
-export function usePositions(address: Address | undefined) {
+export interface Positions {
+  /** What the kernel owes this account, in the payment token's base units. */
+  withdrawable: bigint;
+  /** The account's XLM, in stroops: what it pays every transaction fee with. */
+  xlm: bigint;
+  /** The account's balance of the kernel's payment token, in that token's base units. */
+  token: bigint;
+}
+
+export function usePositions(account: string | undefined) {
   return useQuery({
-    queryKey: ["positions", chainId, address ?? null],
-    enabled: address !== undefined,
+    queryKey: ["positions", NETWORK_ID, account ?? null],
+    enabled: readOnly !== null && account !== undefined,
     refetchInterval: POLL_MS,
     queryFn: async (): Promise<Positions> => {
-      const owner = address ?? zeroAddress;
-      const [withdrawable, bondWithdrawable, usdcBalance] = await Promise.all([
-        readOnlyClient.withdrawable(owner),
-        readOnlyClient.bondWithdrawable(owner),
-        readOnlyClient.usdcBalance(owner),
+      const client = readOnly;
+      if (client === null || account === undefined) throw new Error("no deployment or no account");
+      const [owed, xlm, token] = await Promise.all([
+        withdrawable(client, account),
+        nativeBalance(account),
+        paymentToken(client).then((id) => tokenBalance(client, id, account)),
       ]);
-      return { withdrawable, bondWithdrawable, usdcBalance };
+      return { withdrawable: owed, xlm, token };
     },
   });
+}
+
+/** The account's XLM in stroops, from Horizon; zero when the account does not exist yet. */
+export async function nativeBalance(account: string): Promise<bigint> {
+  const response = await fetch(`${horizonUrl}/accounts/${account}`, { headers: { accept: "application/json" } });
+  if (response.status === 404) return 0n;
+  if (!response.ok) throw new Error(`Horizon answered ${response.status} for ${account}`);
+  const body = (await response.json()) as { balances?: { asset_type?: string; balance?: string }[] };
+  const native = body.balances?.find((balance) => balance.asset_type === "native")?.balance ?? "0";
+  const [whole, fraction = ""] = native.split(".");
+  return BigInt(`${whole ?? "0"}${fraction.padEnd(7, "0").slice(0, 7)}`);
+}
+
+/** What the kernel's payment token is called, for every amount on screen. */
+export function usePaymentTokenLabel(): string {
+  return tokenLabel(useNetwork().data?.paymentToken);
 }
 
 export function useNow(intervalMs = 1000): number {
@@ -347,5 +266,5 @@ export function useClockSkew(): number {
   return useNetwork().data?.chainOffset ?? 0;
 }
 
-export { countVotes, jobPhase, LISTING_LABELS, OUTCOME_LABELS, PHASE_LABELS } from "./phase";
+export { jobPhase, LISTING_LABELS, PHASE_LABELS } from "./phase";
 export type { JobPhase } from "./phase";

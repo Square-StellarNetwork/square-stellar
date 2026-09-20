@@ -1,4 +1,3 @@
-import { JobStatus } from "@squaresdk/core";
 import type { JobsSnapshot, JobSummary } from "./square";
 
 export interface LiveStats {
@@ -18,8 +17,8 @@ function latest(job: JobSummary): number {
 }
 
 export function released(job: JobSummary): bigint {
-  const platformFee = (job.budget * BigInt(job.platformFeeBP)) / BPS;
-  const evaluatorFee = (job.budget * BigInt(job.evaluatorFeeBP)) / BPS;
+  const platformFee = (job.budget * BigInt(job.platformFeeBp)) / BPS;
+  const evaluatorFee = (job.budget * BigInt(job.evaluatorFeeBp)) / BPS;
   const net = job.budget - platformFee - evaluatorFee;
   return (net * BigInt(job.providerBps)) / BPS;
 }
@@ -31,12 +30,12 @@ export function liveStats(snapshot: JobsSnapshot): LiveStats {
   let active = 0;
   let lastActivity: number | null = null;
   for (const job of snapshot.jobs) {
-    const inEscrow = job.status === JobStatus.Funded || job.status === JobStatus.Submitted;
+    const inEscrow = job.status === "Funded" || job.status === "Submitted";
     if (inEscrow) {
       escrowed += job.budget;
       active += 1;
     }
-    if (job.status === JobStatus.Completed) {
+    if (job.status === "Completed") {
       settled += released(job);
       completed += 1;
     }
@@ -61,5 +60,5 @@ export function matchesQuery(job: JobSummary, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return true;
   if (/^#?\d+$/.test(needle)) return job.id.toString() === needle.replace(/^#/, "");
-  return job.client.toLowerCase().includes(needle) || job.provider.toLowerCase().includes(needle);
+  return job.client.toLowerCase().includes(needle) || (job.provider ?? "").toLowerCase().includes(needle);
 }

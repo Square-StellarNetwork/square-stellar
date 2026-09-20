@@ -1,4 +1,4 @@
-import { JobStatus } from "@squaresdk/core";
+import type { JobStatusName } from "./contracts";
 
 export type JobPhase =
   | "open"
@@ -11,24 +11,22 @@ export type JobPhase =
   | "rejected"
   | "expired";
 
-export function jobPhase(job: { status: number; challengeEnd: number; disputed: boolean }, now: number): JobPhase {
+export function jobPhase(job: { status: JobStatusName; challengeEnd: number; disputed: boolean }, now: number): JobPhase {
   switch (job.status) {
-    case JobStatus.Open:
+    case "Open":
       return "open";
-    case JobStatus.Funded:
+    case "Funded":
       return "funded";
-    case JobStatus.Submitted:
+    case "Submitted":
       if (job.disputed) return "disputed";
       if (job.challengeEnd > 0 && now >= job.challengeEnd) return "finalizable";
       return job.challengeEnd > 0 ? "in-window" : "submitted";
-    case JobStatus.Completed:
+    case "Completed":
       return "completed";
-    case JobStatus.Rejected:
+    case "Rejected":
       return "rejected";
-    case JobStatus.Expired:
+    case "Expired":
       return "expired";
-    default:
-      return "open";
   }
 }
 
@@ -44,15 +42,5 @@ export const PHASE_LABELS: Record<JobPhase, string> = {
   expired: "Expired",
 };
 
-export const LISTING_LABELS = ["No listing", "Listed", "Sold", "Cancelled"] as const;
-export const OUTCOME_LABELS = ["Pending", "Complete", "Reject", "Lapsed"] as const;
-
-export function countVotes(mask: bigint): number {
-  let count = 0;
-  let value = mask;
-  while (value > 0n) {
-    count += Number(value & 1n);
-    value >>= 1n;
-  }
-  return count;
-}
+/** The claim market is Phase 2 (#39's MVP scope); its labels stay for when it lands. */
+export const LISTING_LABELS: Record<string, string> = { None: "Not listed", Listed: "Listed", Sold: "Sold", Cancelled: "Cancelled" };
