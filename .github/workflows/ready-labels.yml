@@ -1,8 +1,13 @@
 name: ready labels
 
 # Bir issue kapandiginda ona bagimli olanlar acilabilir hale gelir.
-# Bu workflow native issue bagimliliklarini okuyup `ready` etiketini
-# yeniden hesaplar.
+# Bu workflow native issue bagimliliklarini okuyup `ready` ve `blocked`
+# etiketlerini yeniden hesaplar.
+#
+# Ikisi birbirinin tam tersidir ve ayni anda duramaz. Onceden yalnizca
+# `ready` yonetiliyordu, `blocked` ise elle konmustu; engelleyicileri
+# kapanan issue'larda elle konan etiket kalinca #59 hem `ready` hem
+# `blocked` tasir hale geldi ve #58 hicbir etiket almadi (#48).
 #
 # ATAMALARA DOKUNMAZ. Sahiplik kaynak projeye gore sabittir
 # (covenant, aperture, aip) ve issue bloke olsun olmasin gorunur kalir. Sira bilgisini `ready`
@@ -52,13 +57,20 @@ jobs:
               const openBlockers = blockers.filter(b => b.state === 'open').map(b => b.number);
               const isReady = openBlockers.length === 0;
               const labels = issue.labels.map(l => l.name);
-              const hasReady = labels.includes('ready');
-              if (isReady && !hasReady) {
-                await github.rest.issues.addLabels({owner, repo, issue_number: n, labels: ['ready']});
-                core.notice(`#${n} hazir oldu`);
-              } else if (!isReady && hasReady) {
-                await github.rest.issues.removeLabel({owner, repo, issue_number: n, name: 'ready'})
+
+              // Istenen etiket ile istenmeyen etiket: tek kaynaktan, boylece
+              // ikisi ayni issue'da duramaz.
+              const want = isReady ? 'ready' : 'blocked';
+              const drop = isReady ? 'blocked' : 'ready';
+
+              if (!labels.includes(want)) {
+                await github.rest.issues.addLabels({owner, repo, issue_number: n, labels: [want]});
+                core.notice(isReady ? `#${n} hazir oldu` : `#${n} bloke: #${openBlockers.join(', #')}`);
+              }
+              if (labels.includes(drop)) {
+                // Etiket arada elle silinmis olabilir; 404 beklenen bir sonuctur.
+                await github.rest.issues.removeLabel({owner, repo, issue_number: n, name: drop})
                   .catch(() => {});
-                core.notice(`#${n} tekrar bloke: #${openBlockers.join(', #')}`);
+                core.notice(`#${n}: ${drop} kaldirildi`);
               }
             }
