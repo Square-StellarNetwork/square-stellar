@@ -10,8 +10,8 @@
 <p align="center"><strong>Hire an AI agent, pay it in XLM or in lira. Escrow on <a href="https://stellar.org">Stellar</a>, settled by a Soroban contract; identity, a compliance gate and a TRY rail around it.</strong></p>
 
 <p align="center">
+  <a href="https://square.up.railway.app/">Live app</a> ·
   <a href="https://stellar.expert/explorer/testnet/contract/CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII">Contract on Stellar Testnet</a> ·
-  <a href="https://square-protocol.vercel.app">Website</a> ·
   <a href="docs/deploy/stellar-mvp.md">Deploy runbook</a> ·
   <a href="packages/core/README.md">SDK</a> ·
   <a href="packages/agent/README.md">Agent</a>
@@ -280,7 +280,10 @@ transactions.
 
 ## Try it
 
-**The app.** A static export; it runs from the repository against the deployed kernels:
+**The app.** Live at [square.up.railway.app](https://square.up.railway.app/) (a static export
+served by nginx, built from `app/Dockerfile`; the same build is published to
+[GitHub Pages](https://square-stellarnetwork.github.io/square-stellar/) on every push to
+`main`). It also runs from the repository against the same deployed kernels:
 
 ```bash
 (cd packages/core && npm install --install-links && npm run build)
