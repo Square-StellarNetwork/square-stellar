@@ -5,6 +5,39 @@ proves it (#45). The MVP deploys **one** contract, `square_job`, paid in
 native XLM. The other eight, USDC as the payment token and the 8004
 registries are phase 2, and the record names them when they exist.
 
+## What is deployed
+
+| | |
+|---|---|
+| Kernel | [`CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII`](https://stellar.expert/explorer/testnet/contract/CATY3ZGNSS44HY4GAPBBAWQUW4E7YHNHG7GVFLUWPJPO22WP3O5YZVII) |
+| Parameters | challenge window 30 s, platform fee 250 bps, `ledger_close_ms` 5000, `min_persistent_ttl` 120960 |
+| Payment token | native XLM, SAC `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+| Wasm | `e497c6bbea72b06c9080281b1b08d9ec5ee2b3b01154584eb8332ee22e81c2e1`, the one this tree builds |
+| Owner | `GC6QXBECBRRLAQKUZJ3BG5Z2NGGZ7WOOL56WDKKN5DFMZKIHHRKN7AVA` |
+| Record | `contracts/deployments/testnet.json`, `ledger` 4766069 (its first event) |
+
+The short window is deliberate: it is the deployment the demo and the app run
+on, and thirty seconds is long enough to be a real window and short enough to
+be watched. Every value in the record was read back from the chain — `config`
+and `owner` from the contract, the Wasm hash from its instance's executable,
+the ledger from its first event — rather than copied from a deploy log, which
+is why `check:deployed-wasm` passes on it.
+
+**Re-running the script does not reproduce this address.** A contract id is
+derived from the deployer, the Wasm and the salt, and the deployer here is not
+the key this tree's `square-testnet-deployer` alias holds. A run of
+`deploy-testnet.sh` from another machine writes its own kernel to the same
+record path, so a record that changes address is a decision, not a refresh:
+the app, the agent runtime, the live tests and the README all resolve whatever
+it names, and jobs already escrowed on the old kernel stop being listed.
+
+The script's own defaults (120 s, 100 bps) were run end to end on 2026-09-20
+at [`CBSPPHW2P5NGITR7Z5NJIN6IB5VIOHOQDSVMWXT4LH6WZCHMHUA2KFJQ`](https://stellar.expert/explorer/testnet/contract/CBSPPHW2P5NGITR7Z5NJIN6IB5VIOHOQDSVMWXT4LH6WZCHMHUA2KFJQ),
+recorded in
+[lifecycle-testnet-2026-09-20-script-defaults.md](./lifecycle-testnet-2026-09-20-script-defaults.md).
+That run is what proves the script, the constructor arguments and the four
+post-deployment reads; it is not the deployment the record names.
+
 ## Prerequisites
 
 | | |
@@ -118,7 +151,7 @@ failure this list exists to prevent:
 - `contracts/deployments/<network>.json`, written by the script
 - `packages/core/src/stellar/deployments.ts`, the compiled-in copy
 - the README's "Network" and "Square contracts" tables
-- `site/src/lib/links.ts`, for the explorer links
+- `site/src/lib/links.ts`, which names the network and the explorer but no address
 - `app/`'s environment, through the SDK rather than by hand
 
 ## What this does not do yet
