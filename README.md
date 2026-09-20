@@ -130,14 +130,23 @@ for the app's wallet connection (any SEP-43 wallet is a `Signer` to the SDK);
 bindings; `@stellar/stellar-sdk` 16.3.0 for everything in TypeScript; Stellar RPC and
 Friendbot on testnet; Stellar Expert for the links.
 
-**Stellar Skills referenced** ([skills.stellar.org](https://skills.stellar.org)):
-`skills/standards/SKILL.md` (SEPs, CAPs & Ecosystem) is where the standards this codebase
-implements come from — SEP-41 (the token interface), SEP-43 (the wallet interface),
-SEP-53 (signed messages, `@squaresdk/hardening`), CAP-0073 (`trust`) and Soroban's
-authorization framework; `skills/smart-contracts/SKILL.md` and `skills/dapp/SKILL.md`
-(both in `stellar/stellar-dev-skill`) cover the contract and the app; the Anchors skill
-(`CheesecakeLabs/stellar-anchor-skill/SKILL.md`) is the reference for the TRY rail on the
-roadmap below.
+### Stellar Skills used
+
+From [skills.stellar.org](https://skills.stellar.org). Each row names the file and the
+part of this repository it bears on, so the citation can be checked rather than taken on
+trust. Every path is in `stellar/stellar-dev-skill` unless another repository is given.
+
+| Skill file | Where it bears on this repository |
+|---|---|
+| [`skills/standards/SKILL.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/standards/SKILL.md) | The standards the code implements: SEP-41, the token interface `fund` calls inside the client's own authorization tree; SEP-43, which is the shape of `Signer` in [`packages/core/src/stellar/signer.ts`](packages/core/src/stellar/signer.ts) and therefore of every wallet; SEP-53, signed actions in [`packages/hardening/src/signedMessages.ts`](packages/hardening/src/signedMessages.ts); CAP-0073 `trust`, which is what `SquareClient.trustToken` sends. |
+| [`skills/smart-contracts/SKILL.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/smart-contracts/SKILL.md), [`skills/smart-contracts/development.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/smart-contracts/development.md) | The kernel: authorization taken as a parameter and checked with `require_auth` rather than read from a caller, instance storage for settings against persistent storage for jobs and balances, and the TTL arithmetic in [`contracts/common/src/ttl.rs`](contracts/common/src/ttl.rs). The reasoning is in [auth-and-token-flow.md](docs/decisions/auth-and-token-flow.md) and [fees-and-ttl.md](docs/decisions/fees-and-ttl.md). |
+| [`skills/smart-contracts/testing.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/smart-contracts/testing.md) | The kernel's own suite, `contracts/contracts/square_job/src/test.rs`: moving ledger time, asserting authorization trees, reading `#[contractevent]` structs back out of the environment. |
+| [`skills/assets/SKILL.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/assets/SKILL.md) | The Stellar Asset Contract path — [`packages/core/src/stellar/usdc.ts`](packages/core/src/stellar/usdc.ts) and the client's `trustline`, `assertReceivable` and `tokenBalance`: why native XLM needs no trustline and an issued asset does, which is why the MVP is paid in XLM. |
+| [`skills/data/SKILL.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/data/SKILL.md) | How the chain is read: `SquareClient.getEvents` over the kernel's own events, `getLedgers` for the ledger close time the countdowns run on, and Horizon for a native balance. |
+| [`skills/dapp/SKILL.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/dapp/SKILL.md) | The app's wallet layer: Stellar Wallets Kit behind the same `Signer` the SDK takes, so the browser and a script sign the same way. Lands with the app ([#39](https://github.com/Square-StellarNetwork/square-stellar/issues/39)). |
+| [`skills/cross-chain/cctp.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/cross-chain/cctp.md) | Where CCTP would sit, written up in [cctp-funding.md](docs/design/cctp-funding.md) for the EVM side and re-read for Stellar: domain 27, and the rule that a transfer into Stellar names `CctpForwarder` as both `mintRecipient` and `destinationCaller`. The decision on whether it carries the product is [#57](https://github.com/Square-StellarNetwork/square-stellar/issues/57). |
+| [`SKILL.md`](https://github.com/CheesecakeLabs/stellar-anchor-skill/blob/main/SKILL.md) (`CheesecakeLabs/stellar-anchor-skill`) | The anchor client [`packages/core/src/stellar/anchor.ts`](packages/core/src/stellar/anchor.ts): SEP-1 discovery of a `stellar.toml`, SEP-10 sign-in with the wallet's own signer, SEP-6 deposit and withdrawal with their status, SEP-38 quotes. |
+| [`skills/zk-proofs/SKILL.md`](https://github.com/stellar/stellar-dev-skill/blob/main/skills/zk-proofs/SKILL.md) | The compliance circuit [`circuits/payment.circom`](circuits/payment.circom), Poseidon over BN254's scalar field, and [groth16-on-soroban.md](docs/decisions/groth16-on-soroban.md) for what verifying it on Soroban costs. The on-chain verifier is phase 2 and its crate is a skeleton today. |
 
 ## Deployed on Stellar Testnet
 
