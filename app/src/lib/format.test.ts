@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { formatBps, formatCountdown, formatDuration, formatUsdc, parseUsdc, shortAddress, shortHash } from "./format";
+import { Asset, Keypair, Networks } from "@stellar/stellar-sdk";
 
-describe("usdc formatting", () => {
-  it("prints six decimal base units with grouping and at least two decimals", () => {
-    expect(formatUsdc(1_000_000n)).toBe("1.00");
-    expect(formatUsdc(1_234_567_890n)).toBe("1,234.56789");
-    expect(formatUsdc(5_000n)).toBe("0.005");
-    expect(formatUsdc(-2_500_000n)).toBe("-2.50");
+import { addressKindLabel, formatAmount, formatBps, formatCountdown, formatDuration, parseAmount, shortAddress, shortHash } from "./format";
+
+describe("amounts, at the seven decimals every Stellar token has", () => {
+  it("prints base units with grouping and at least two decimals", () => {
+    expect(formatAmount(10_000_000n)).toBe("1.00");
+    expect(formatAmount(12_345_678_900n)).toBe("1,234.56789");
+    expect(formatAmount(50_000n)).toBe("0.005");
+    expect(formatAmount(-25_000_000n)).toBe("-2.50");
+    expect(formatAmount(1n)).toBe("0.0000001");
   });
 
   it("parses what it prints and refuses the rest", () => {
-    expect(parseUsdc("1,234.56789")).toBe(1_234_567_890n);
-    expect(parseUsdc(" 0.5 ")).toBe(500_000n);
-    expect(parseUsdc("1.2345678")).toBeNull();
-    expect(parseUsdc("abc")).toBeNull();
+    expect(parseAmount("1,234.56789")).toBe(12_345_678_900n);
+    expect(parseAmount(" 0.5 ")).toBe(5_000_000n);
+    expect(parseAmount("0.0000001")).toBe(1n);
+    expect(parseAmount("1.23456789")).toBeNull();
+    expect(parseAmount("abc")).toBeNull();
+    expect(parseAmount("-1")).toBeNull();
+  });
+
+  it("round trips every amount it prints", () => {
+    for (const value of [0n, 1n, 10_000_000n, 12_345_678_900n, 99_999_999_999_999n]) {
+      expect(parseAmount(formatAmount(value))).toBe(value);
+    }
   });
 });
 
@@ -38,9 +49,17 @@ describe("durations and rates", () => {
 });
 
 describe("shortening", () => {
-  it("keeps the ends of an address and a hash", () => {
-    expect(shortAddress("0x4f1397ea728005003cc351260bb5d7d00198da86")).toBe("0x4F13…dA86");
-    expect(shortHash("0x" + "ab".repeat(32))).toBe("0xabababab…ababab");
+  it("keeps a strkey recognisable at both ends and leaves anything else alone", () => {
+    const account = Keypair.random().publicKey();
+    expect(shortAddress(account)).toBe(`${account.slice(0, 4)}\u2026${account.slice(-4)}`);
+    expect(addressKindLabel(account)).toBe("account");
+    const contract = new Asset("USDC", Keypair.random().publicKey()).contractId(Networks.TESTNET);
+    expect(shortAddress(contract)).toBe(`${contract.slice(0, 4)}\u2026${contract.slice(-4)}`);
+    expect(addressKindLabel(contract)).toBe("contract");
     expect(shortAddress("not-an-address")).toBe("not-an-address");
+  });
+
+  it("keeps the ends of a transaction hash", () => {
+    expect(shortHash("ab".repeat(32))).toBe("abababababab".slice(0, 10) + "\u2026" + "ababab");
   });
 });

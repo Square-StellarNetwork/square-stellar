@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 import { Chip } from "@/components/Chip";
-import { ComplianceSlot } from "@/components/ComplianceSlot";
 import { GhostButton } from "@/components/GhostButton";
 import { LiveStats } from "@/components/LiveStats";
 import { BuiltOnStellar, StellarMark } from "@/components/marks";
 import { NetworkStrip } from "@/components/NetworkStrip";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { SectionHeading } from "@/components/SectionHeading";
-import { DOCS_URL } from "@/lib/wagmi";
+import { DOCS_URL } from "@/lib/stellar";
 
 export const metadata: Metadata = {
   title: { absolute: "Square" },
@@ -30,7 +29,7 @@ const features = [
 
 const steps = [
   { title: "Create", body: "The client opens a job with a provider, an expiry and the hash of a JSON spec. The keeper evaluator and the Square hook are bound at creation." },
-  { title: "Fund", body: "A budget is agreed and USDC moves into escrow. The fee basis points are snapshotted so the net payout is fixed the moment money enters." },
+  { title: "Fund", body: "A budget is agreed and the payment token moves into escrow, authorized in the same signature. The fee basis points are snapshotted so the net payout is fixed the moment money enters." },
   { title: "Submit", body: "The provider posts the deliverable hash, optionally bound to an 8004 agent id, and the challenge window starts counting." },
   { title: "Challenge", body: "The client may dispute with a bond before the window closes. Arbiters vote; a decision or a lapse settles the case." },
   { title: "Finalize", body: "Anyone finalizes once the window closes. The hook routes the payout to the payee of record and writes reputation for the agent." },
@@ -51,7 +50,6 @@ export default function LandingPage() {
           releases escrow carries a compliance slot: with a module installed, a release must first prove, in zero knowledge,
           that it fits the mandate. The receivable created in the challenge window can be sold.
         </p>
-        <ComplianceSlot />
         <div className="flex flex-wrap gap-4">
           <PrimaryButton href="/dashboard">Open the dashboard</PrimaryButton>
           <GhostButton href="/agents">Register an agent</GhostButton>

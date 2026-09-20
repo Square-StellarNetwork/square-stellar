@@ -1,4 +1,4 @@
-import { JobStatus } from "@squaresdk/core";
+import type { JobStatusName } from "./contracts";
 import { jobPhase, type JobPhase } from "./phase";
 import type { JobSummary } from "./square";
 
@@ -46,8 +46,9 @@ export function bucketOf(timestamp: number, size: number): number {
   return Math.floor(timestamp / size) * size;
 }
 
-export function usdc(value: bigint): number {
-  return Number(value) / 1_000_000;
+/** Base units as a chart number: seven decimals, the Stellar unit. */
+export function tokens(value: bigint): number {
+  return Number(value) / 10_000_000;
 }
 
 export interface FlowPoint {
@@ -79,8 +80,8 @@ export function escrowFlow(jobs: readonly JobSummary[]): FlowSeries {
     byBucket.set(key, entry);
     return entry;
   };
-  for (const job of funded) touch(job.fundedAt).funded += usdc(job.budget);
-  for (const job of submitted) touch(job.submittedAt).submitted += usdc(job.budget);
+  for (const job of funded) touch(job.fundedAt).funded += tokens(job.budget);
+  for (const job of submitted) touch(job.submittedAt).submitted += tokens(job.budget);
   const first = Math.min(...byBucket.keys());
   const last = Math.max(...byBucket.keys());
   const points: FlowPoint[] = [];
@@ -110,7 +111,7 @@ export function phaseBreakdown(jobs: readonly JobSummary[], now: number, labels:
     const slice = slices.get(jobPhase(job, now));
     if (!slice) continue;
     slice.count += 1;
-    slice.budget += usdc(job.budget);
+    slice.budget += tokens(job.budget);
   }
   return [...slices.values()].filter((slice) => slice.count > 0);
 }
@@ -125,12 +126,15 @@ export interface PayoutSplit {
   providerBps: number;
 }
 
-export function payoutSplit(record: { budget: bigint; platformFeeBP: number; evaluatorFeeBP: number; providerBps: number; status: number }, netPayout: bigint): PayoutSplit {
-  const budget = usdc(record.budget);
-  const platformFee = (budget * record.platformFeeBP) / 10_000;
-  const evaluatorFee = (budget * record.evaluatorFeeBP) / 10_000;
-  const net = netPayout > 0n ? usdc(netPayout) : Math.max(0, budget - platformFee - evaluatorFee);
-  const providerBps = record.status === JobStatus.Completed ? record.providerBps : 10_000;
+export function payoutSplit(
+  record: { budget: bigint; platformFeeBp: number; evaluatorFeeBp: number; providerBps: number; status: JobStatusName },
+  netPayout: bigint,
+): PayoutSplit {
+  const budget = tokens(record.budget);
+  const platformFee = (budget * record.platformFeeBp) / 10_000;
+  const evaluatorFee = (budget * record.evaluatorFeeBp) / 10_000;
+  const net = netPayout > 0n ? tokens(netPayout) : Math.max(0, budget - platformFee - evaluatorFee);
+  const providerBps = record.status === "Completed" ? record.providerBps : 10_000;
   const providerShare = (net * providerBps) / 10_000;
   return { budget, platformFee, evaluatorFee, net, providerShare, clientShare: net - providerShare, providerBps };
 }
@@ -148,10 +152,10 @@ export interface FeeTotals {
 export function feeTotals(jobs: readonly JobSummary[]): FeeTotals {
   const totals: FeeTotals = { platform: 0, evaluator: 0, netPaid: 0, refunded: 0, splitToClient: 0, completed: 0, rejected: 0 };
   for (const job of jobs) {
-    if (job.status === JobStatus.Completed) {
-      const budget = usdc(job.budget);
-      const platform = (budget * job.platformFeeBP) / 10_000;
-      const evaluator = (budget * job.evaluatorFeeBP) / 10_000;
+    if (job.status === "Completed") {
+      const budget = tokens(job.budget);
+      const platform = (budget * job.platformFeeBp) / 10_000;
+      const evaluator = (budget * job.evaluatorFeeBp) / 10_000;
       const net = budget - platform - evaluator;
       const payeeShare = (net * job.providerBps) / 10_000;
       const clientShare = net - payeeShare;
@@ -161,8 +165,8 @@ export function feeTotals(jobs: readonly JobSummary[]): FeeTotals {
       totals.splitToClient += clientShare;
       totals.refunded += clientShare;
       totals.completed += 1;
-    } else if (job.status === JobStatus.Rejected && job.fundedAt > 0) {
-      totals.refunded += usdc(job.budget);
+    } else if (job.status === "Rejected" && job.fundedAt > 0) {
+      totals.refunded += tokens(job.budget);
       totals.rejected += 1;
     }
   }
@@ -203,14 +207,14 @@ export function settlementClock(input: {
   challengeEnd: number;
   disputedAt: number;
   resolveBy: number;
-  status: number;
+  status: JobStatusName;
   now: number;
 }): SettlementClock {
   const { now } = input;
   const segments: ClockSegment[] = [];
   const marks: ClockMark[] = [{ key: "created", label: "Created", at: input.createdAt }];
   const state = (from: number, to: number): ClockSegment["state"] => (now >= to ? "done" : now >= from ? "live" : "future");
-  const settled = input.status >= JobStatus.Completed;
+  const settled = input.status === "Completed" || input.status === "Rejected" || input.status === "Expired";
   const fundedAt = input.fundedAt > 0 ? input.fundedAt : null;
   const submittedAt = input.submittedAt > 0 ? input.submittedAt : null;
   const openEnd = fundedAt ?? (settled ? input.createdAt : Math.min(now, input.expiredAt));
@@ -271,7 +275,7 @@ export function clusterMarks(marks: readonly (ClockMark & { x: number })[], minG
   return clusters;
 }
 
-export function formatCompactUsdc(value: number): string {
+export function formatCompactAmount(value: number): string {
   const trim = (text: string) => (text.includes(".") ? text.replace(/\.?0+$/, "") : text);
   if (value >= 1_000_000) return `${trim((value / 1_000_000).toFixed(2))}M`;
   if (value >= 10_000) return `${trim((value / 1_000).toFixed(1))}k`;

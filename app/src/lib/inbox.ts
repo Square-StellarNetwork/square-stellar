@@ -1,5 +1,3 @@
-import { JobStatus } from "@squaresdk/core";
-import { isAddressEqual, zeroAddress, type Address } from "viem";
 import { keeperEvaluates, refundAvailable, submitAvailable } from "./actions";
 import type { JobSummary } from "./square";
 
@@ -15,7 +13,7 @@ export interface InboxGroup {
 const COPY: Record<InboxKind, { title: string; body: string }> = {
   submit: { title: "Waiting for your deliverable", body: "You are the provider and the escrow is funded. Submit the hash before the deadline shown on each job, which is its expiry less the settlement horizon snapshotted on it." },
   evaluate: { title: "Waiting for your evaluation", body: "You are the evaluator on the record and the provider has submitted. Complete to pay the provider, or reject to refund the client." },
-  fund: { title: "Waiting for your funding", body: "The budget is agreed. Approve USDC and fund to fix the fees and start the clock." },
+  fund: { title: "Waiting for your funding", body: "The budget is agreed. Fund it to fix the fees and start the clock; the transfer is authorized in the same signature, so there is no approval step." },
   budget: { title: "Needs a budget", body: "You opened these jobs without a budget. Agree one before funding." },
   dispute: { title: "Your challenge window is open", body: "The provider submitted. You may still dispute with a bond until the window closes." },
   finalize: { title: "Ready to finalize", body: "The challenge window closed without a dispute. Anyone may finalize; the payee is credited." },
@@ -24,28 +22,29 @@ const COPY: Record<InboxKind, { title: string; body: string }> = {
 
 const ORDER: InboxKind[] = ["submit", "evaluate", "fund", "budget", "dispute", "finalize", "refund"];
 
-function same(a: Address, b: Address): boolean {
-  return isAddressEqual(a, b);
+/** A strkey has one spelling, so equality is the comparison. */
+function same(a: string | null, b: string): boolean {
+  return a === b;
 }
 
-export function classify(job: JobSummary, address: Address, keeperEvaluator: Address, now: number): InboxKind | null {
+export function classify(job: JobSummary, address: string, keeperEvaluator: string, now: number): InboxKind | null {
   const client = same(job.client, address);
   const provider = same(job.provider, address);
   // A human evaluator: the record names this wallet and it is not the keeper,
   // so nothing settles the submission but its own decision.
   if (!client && !provider) {
-    return job.status === JobStatus.Submitted && same(job.evaluator, address) && !keeperEvaluates(job, keeperEvaluator) ? "evaluate" : null;
+    return job.status === "Submitted" && same(job.evaluator, address) && !keeperEvaluates(job, keeperEvaluator) ? "evaluate" : null;
   }
   if (client && refundAvailable(job, keeperEvaluator, now)) return "refund";
   const live = now < job.expiredAt;
   switch (job.status) {
-    case JobStatus.Open:
+    case "Open":
       if (!client || !live) return null;
       if (job.budget === 0n) return "budget";
-      return same(job.provider, zeroAddress) ? null : "fund";
-    case JobStatus.Funded:
+      return job.provider === null ? null : "fund";
+    case "Funded":
       return provider && submitAvailable(job, now) ? "submit" : null;
-    case JobStatus.Submitted:
+    case "Submitted":
       if (job.disputed) return null;
       if (!keeperEvaluates(job, keeperEvaluator)) return null;
       if (job.challengeEnd > 0 && now >= job.challengeEnd) return "finalize";
@@ -55,12 +54,7 @@ export function classify(job: JobSummary, address: Address, keeperEvaluator: Add
   }
 }
 
-export function walletInbox(
-  jobs: readonly JobSummary[],
-  address: Address | undefined,
-  keeperEvaluator: Address,
-  now: number,
-): InboxGroup[] {
+export function walletInbox(jobs: readonly JobSummary[], address: string | undefined, keeperEvaluator: string, now: number): InboxGroup[] {
   if (!address) return [];
   const buckets = new Map<InboxKind, JobSummary[]>();
   for (const job of jobs) {
@@ -73,7 +67,7 @@ export function walletInbox(
   return ORDER.filter((kind) => buckets.has(kind)).map((kind) => ({ kind, ...COPY[kind], jobs: buckets.get(kind) ?? [] }));
 }
 
-export function walletJobCount(jobs: readonly JobSummary[], address: Address | undefined): number {
+export function walletJobCount(jobs: readonly JobSummary[], address: string | undefined): number {
   if (!address) return 0;
   return jobs.filter((job) => same(job.client, address) || same(job.provider, address) || same(job.evaluator, address)).length;
 }

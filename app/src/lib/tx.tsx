@@ -1,49 +1,71 @@
 "use client";
 
-import { TransactionRevertedError, type TransactionResult } from "@squaresdk/core";
+import {
+  ArchivedStateError,
+  NeedsMoreSignaturesError,
+  SimulationFailedError,
+  SquareContractError,
+  TransactionFailedError,
+  TransactionPendingError,
+  TransactionSendError,
+  TrustlineMissingError,
+  WalletRequiredError,
+  type TransactionResult,
+} from "@squaresdk/core/stellar";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { BaseError, ContractFunctionRevertedError, type Hex } from "viem";
+
 import { shortHash } from "./format";
+import { explorerLink } from "./stellar";
 
 export type TxState =
   | { status: "idle" }
   | { status: "pending"; label: string }
-  | { status: "success"; label: string; hash: Hex }
+  | { status: "success"; label: string; hash: string; link: string | null }
   | { status: "error"; label: string; message: string };
 
 interface TxContextValue {
   state: TxState;
   busy: boolean;
-  run: <T extends TransactionResult>(label: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  run: <T>(label: string, fn: () => Promise<TransactionResult<T>>) => Promise<TransactionResult<T> | undefined>;
   notify: (state: TxState) => void;
   dismiss: () => void;
 }
 
 const TxContext = createContext<TxContextValue | null>(null);
 
+/**
+ * What went wrong, in the words the chain used. A refusal names the
+ * contract's own error, because the client decodes it from the simulation's
+ * diagnostics before anything is sent.
+ */
 export function describeError(error: unknown): string {
-  if (error instanceof TransactionRevertedError) {
-    return `Reverted on chain: transaction ${shortHash(error.hash)} was mined and applied nothing.`;
+  if (error instanceof SquareContractError) return error.message;
+  if (error instanceof SimulationFailedError) return `${error.contract}.${error.method} was refused: ${error.reason}`;
+  if (error instanceof ArchivedStateError) {
+    return `${error.contract}.${error.method} touches an archived ledger entry; it has to be restored before this call works.`;
   }
-  if (error instanceof BaseError) {
-    if (error.name === "ProviderNotFoundError") return "No injected wallet was found in this browser.";
-    const reverted = error.walk((cause) => cause instanceof ContractFunctionRevertedError);
-    if (reverted instanceof ContractFunctionRevertedError) {
-      const name = reverted.data?.errorName;
-      return name ? `Reverted with ${name}` : reverted.shortMessage;
-    }
-    return error.shortMessage;
+  if (error instanceof NeedsMoreSignaturesError) {
+    return `This call also needs ${error.addresses.join(", ")} to sign, which this wallet cannot do here.`;
   }
-  if (error instanceof Error) {
-    if (error.name === "ProviderNotFoundError") return "No injected wallet was found in this browser.";
-    return error.message;
+  if (error instanceof TrustlineMissingError) {
+    return `${error.account} holds no ${error.asset} trustline, so it cannot receive it.`;
   }
+  if (error instanceof TransactionSendError) return `The network refused the transaction (${error.status}).`;
+  if (error instanceof TransactionFailedError) {
+    return `Transaction ${shortHash(error.hash)} was included in ledger ${error.ledger} and applied nothing.`;
+  }
+  if (error instanceof TransactionPendingError) {
+    return `Transaction ${shortHash(error.hash)} is still pending after ${error.waitedSeconds}s; it may still land.`;
+  }
+  if (error instanceof WalletRequiredError) return "Connect a wallet first: this sends a transaction.";
+  if (error instanceof Error) return error.message;
   return "Unknown error";
 }
 
-export function switchNetworkGuidance(chainName: string, error: unknown): string {
-  return `Switch to ${chainName} inside the wallet, or disconnect here and connect again on ${chainName}. The wallet reported: ${describeError(error)}`;
+/** On Stellar the network is chosen inside the wallet, so this only says so. */
+export function switchNetworkGuidance(networkLabel: string, walletNetwork: string): string {
+  return `This wallet is on ${walletNetwork}. Switch it to ${networkLabel} in the wallet itself, then reconnect here.`;
 }
 
 export function TxProvider({ children }: { children: ReactNode }) {
@@ -51,11 +73,11 @@ export function TxProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
   const run = useCallback(
-    async <T extends TransactionResult>(label: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    async <T,>(label: string, fn: () => Promise<TransactionResult<T>>): Promise<TransactionResult<T> | undefined> => {
       setState({ status: "pending", label });
       try {
         const result = await fn();
-        setState({ status: "success", label, hash: result.hash });
+        setState({ status: "success", label, hash: result.hash, link: explorerLink("tx", result.hash) });
         await queryClient.invalidateQueries();
         return result;
       } catch (error) {
@@ -69,10 +91,7 @@ export function TxProvider({ children }: { children: ReactNode }) {
   const notify = useCallback((next: TxState) => setState(next), []);
   const dismiss = useCallback(() => setState({ status: "idle" }), []);
 
-  const value = useMemo<TxContextValue>(
-    () => ({ state, busy: state.status === "pending", run, notify, dismiss }),
-    [state, run, notify, dismiss],
-  );
+  const value = useMemo<TxContextValue>(() => ({ state, busy: state.status === "pending", run, notify, dismiss }), [state, run, notify, dismiss]);
 
   return <TxContext.Provider value={value}>{children}</TxContext.Provider>;
 }

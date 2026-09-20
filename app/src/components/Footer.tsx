@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Logo } from "./Logo";
 import { StellarMark } from "./marks";
-import { activeChain, DOCS_URL, explorerUrl, isTestnet, REPO_URL, rpcUrl, SITE_URL } from "@/lib/wagmi";
+import { DOCS_URL, explorerUrl, isTestnet, NETWORK_LABEL, REPO_URL, rpcUrl, SITE_URL } from "@/lib/stellar";
 
 const columnTitle = "text-caption font-medium text-carbon";
 const item = "text-caption text-graphite transition-colors hover:text-carbon";
@@ -58,9 +58,9 @@ export function Footer() {
           <p className={columnTitle}>Network</p>
           <p className="flex items-center gap-2 text-caption text-graphite">
             {isTestnet ? <StellarMark className="size-4" /> : null}
-            {activeChain.name}
+            {NETWORK_LABEL}
           </p>
-          <p className="text-caption tabular-nums text-graphite">Chain id {activeChain.id}</p>
+          <p className="text-caption tabular-nums text-graphite">{isTestnet ? "Public testnet" : "Local quickstart"}</p>
           <p className="break-all text-caption text-graphite">{rpcUrl}</p>
         </div>
       </div>

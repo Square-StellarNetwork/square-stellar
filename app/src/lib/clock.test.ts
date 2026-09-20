@@ -1,17 +1,21 @@
-import { JobStatus } from "@squaresdk/core";
+import { Keypair } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import { disputeAvailable } from "./actions";
 import { chainClockOffset, chainNow, clockSkew, CLOCK_SKEW_NOTICE_SECONDS } from "./clock";
 
-const keeper = "0x00000000000000000000000000000000000000Cc" as const;
-const otherEvaluator = "0x00000000000000000000000000000000000000Dd" as const;
+// Real Stellar accounts: a strkey's checksum makes an invented one a lie.
+const gammaAddress = Keypair.random().publicKey();
+const deltaAddress = Keypair.random().publicKey();
+
+const keeper = gammaAddress;
+const otherEvaluator = deltaAddress;
 
 const SUBMITTED_AT = 1_800_000_000;
 const CHALLENGE_WINDOW = 120;
 const CHALLENGE_END = SUBMITTED_AT + CHALLENGE_WINDOW;
 const BROWSER_AHEAD_BY = 120;
 
-const submitted = { evaluator: keeper, status: JobStatus.Submitted, challengeEnd: CHALLENGE_END };
+const submitted = { evaluator: keeper, status: "Submitted" as const, challengeEnd: CHALLENGE_END };
 
 function browserClockMs(chainSecond: number): number {
   return (chainSecond + BROWSER_AHEAD_BY) * 1_000;
@@ -62,7 +66,7 @@ describe("disputeAvailable", () => {
   it("follows KeeperEvaluator.dispute: submitted, evaluated by the keeper, and before the window ends", () => {
     expect(disputeAvailable(submitted, keeper, CHALLENGE_END - 1)).toBe(true);
     expect(disputeAvailable(submitted, keeper, CHALLENGE_END)).toBe(false);
-    expect(disputeAvailable({ ...submitted, status: JobStatus.Funded }, keeper, SUBMITTED_AT)).toBe(false);
+    expect(disputeAvailable({ ...submitted, status: "Funded" as const }, keeper, SUBMITTED_AT)).toBe(false);
     expect(disputeAvailable({ ...submitted, evaluator: otherEvaluator }, keeper, SUBMITTED_AT)).toBe(false);
   });
 });

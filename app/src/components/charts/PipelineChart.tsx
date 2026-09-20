@@ -1,25 +1,27 @@
 "use client";
 
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartColors, chartFont, formatCompactUsdc, type PhaseSlice } from "@/lib/charts";
+import { chartColors, chartFont, formatCompactAmount, type PhaseSlice } from "@/lib/charts";
+import { usePaymentTokenLabel } from "@/lib/square";
 import { ChartFrame, ChartPlaceholder } from "./ChartFrame";
 
 const HEIGHT = 240;
 
-function PipelineTooltip({ active, payload }: { active?: boolean; payload?: { payload: PhaseSlice }[] }) {
+function PipelineTooltip({ active, payload, token }: { active?: boolean; payload?: { payload: PhaseSlice }[]; token: string }) {
   const slice = payload?.[0]?.payload;
   if (!active || !slice) return null;
   return (
     <div className="rounded-xl border border-fog bg-paper-white px-4 py-3 shadow-subtle-2">
       <p className="text-caption font-medium text-carbon">{slice.label}</p>
       <p className="text-caption tabular-nums text-graphite">
-        {slice.count} {slice.count === 1 ? "job" : "jobs"}, {formatCompactUsdc(slice.budget)} USDC in budgets
+        {slice.count} {slice.count === 1 ? "job" : "jobs"}, {formatCompactAmount(slice.budget)} {token} in budgets
       </p>
     </div>
   );
 }
 
 export function PipelineChart({ slices, scanned, loading, error }: { slices: PhaseSlice[]; scanned: number; loading: boolean; error?: string | null }) {
+  const token = usePaymentTokenLabel();
   return (
     <ChartFrame
       title="Pipeline by phase"
@@ -48,10 +50,10 @@ export function PipelineChart({ slices, scanned, loading, error }: { slices: Pha
                 tickLine={false}
                 axisLine={false}
                 width={48}
-                tickFormatter={(value: number) => formatCompactUsdc(value)}
+                tickFormatter={(value: number) => formatCompactAmount(value)}
                 tick={{ fill: chartColors.ash, fontSize: 12, fontFamily: chartFont }}
               />
-              <Tooltip cursor={{ fill: chartColors.mist }} content={<PipelineTooltip />} />
+              <Tooltip cursor={{ fill: chartColors.mist }} content={<PipelineTooltip token={token} />} />
               <Bar dataKey="budget" radius={[7, 7, 7, 7]} barSize={14} isAnimationActive={false}>
                 {slices.map((slice) => (
                   <Cell key={slice.phase} fill={slice.color} />
