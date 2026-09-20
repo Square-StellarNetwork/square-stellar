@@ -14,6 +14,7 @@ import { WalletButton } from "@/components/WalletButton";
 import type { Anchor } from "@squaresdk/core/stellar";
 import { Asset } from "@stellar/stellar-sdk";
 
+import { sep6StatusCopy } from "@/lib/anchorStatus";
 import { depositableAsset, openAnchorTrustline, useAnchor, useAnchorTrustline, useDeposit, useWithdraw } from "@/lib/anchor";
 import { formatAmount } from "@/lib/format";
 import { useSquare } from "@/lib/square";
@@ -22,21 +23,6 @@ import { describeError, useTx } from "@/lib/tx";
 import { useWallet } from "@/lib/wallet";
 
 const AMOUNTS = ["100", "250", "500"];
-
-/** SEP-6's statuses, in words. The anchor's own word is kept beside them. */
-const STATUS_COPY: Record<string, string> = {
-  incomplete: "The anchor is waiting for something before it can start.",
-  pending_user_transfer_start: "Waiting for the bank transfer. On this sandbox you make it happen from the anchor's own page — the link below.",
-  pending_user_transfer_complete: "The transfer is in; the anchor is working on it.",
-  pending_external: "The anchor is waiting on the banking side.",
-  pending_anchor: "The anchor is processing it.",
-  pending_stellar: "The anchor is sending the asset on Stellar.",
-  pending_trust: "Your account has no trustline for the asset, so the anchor cannot pay it.",
-  completed: "Done. The asset is in your wallet.",
-  refunded: "The anchor sent it back.",
-  expired: "The anchor gave up waiting.",
-  error: "The anchor stopped with an error.",
-};
 
 function Step({ n, title, done, children }: { n: number; title: string; done?: boolean; children: React.ReactNode }) {
   return (
@@ -206,7 +192,7 @@ export function DepositView() {
             {state.transaction === null ? null : (
               <>
                 <Row label="Status">
-                  <span className="text-carbon">{STATUS_COPY[state.transaction.status] ?? "The anchor is working on it."}</span>{" "}
+                  <span className="text-carbon">{sep6StatusCopy(state.transaction.status, "deposit", fiat)}</span>{" "}
                   <span className="text-ash">({state.transaction.status})</span>
                 </Row>
                 {state.transaction.amountIn === undefined ? null : (
@@ -312,7 +298,7 @@ export function DepositView() {
               )}
               {out.state.transaction === null ? null : (
                 <Row label="Status">
-                  <span className="text-carbon">{STATUS_COPY[out.state.transaction.status] ?? "The anchor is working on it."}</span>{" "}
+                  <span className="text-carbon">{sep6StatusCopy(out.state.transaction.status, "withdraw", fiat)}</span>{" "}
                   <span className="text-ash">({out.state.transaction.status})</span>
                 </Row>
               )}
