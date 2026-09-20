@@ -33,7 +33,9 @@ contracts/deployments/5042002.local.json
 # Soroban build output. Compiled Wasm is never committed: a deployment record
 # carries each Wasm's sha256, and `stellar contract build` reproduces the bytes
 # from the pinned toolchain and Cargo.lock (docs/decisions/stellar-target.md).
+# Every Cargo workspace under contracts/ writes its own, vendored ones included.
 contracts/target/
+contracts/**/target/
 # soroban-sdk testutils writes a ledger snapshot per test; the tests are the record.
 contracts/**/test_snapshots/
 *.wasm
